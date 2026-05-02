@@ -1,0 +1,172 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 比赛表：只要下载过一次，就永久存着，无需重复下载
+model Match {
+  id             String     @id
+  mapName        String?
+  gameMode       String?
+  playedAt       DateTime
+  dataPath       String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  
+  killEvents KillEvent[]
+  userMatches UserMatch[]
+}
+
+// 击杀事件表：核心数据
+model KillEvent {
+  id          Int      @id @default(autoincrement())
+  matchId     String
+  match       Match    @relation(fields: [matchId], references: [id])
+  
+  killerId    String
+  killerName  String
+  victimId    String
+  victimName  String
+  
+  weaponId    String
+  distance    Float
+  isHeadshot  Boolean  @default(false)
+  timestamp   DateTime
+
+  @@index([matchId])
+  @@index([killerId]) // 直接通过 userId 查询"我杀了谁"
+  @@index([victimId]) // 直接通过 userId 查询"谁杀了我"
+  @@index([killerName]) // 兼容按昵称查询
+  @@index([victimName]) // 兼容按昵称查询
+  @@index([killerId, timestamp]) // 优化按时间排序的查询
+  @@index([victimId, timestamp]) // 优化按时间排序的查询
+  
+  @@unique([matchId, killerId, victimId, timestamp]) // 唯一约束：同一比赛中同一时刻同一击杀者击杀同一受害者只记录一次
+}
+
+// 用户表：存储用户信息，处理昵称变化
+model User {
+  id          Int        @id @default(autoincrement())
+  pubgId      String     @unique @map("pubg_id")
+  nickname    String
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  
+  userMatches UserMatch[]
+  
+  @@map("users")
+}
+
+// 用户-比赛关联表：记录用户参与的比赛
+model UserMatch {
+  id        Int      @id @default(autoincrement())
+  userId    String   @map("user_id")
+  matchId   String   @map("match_id")
+  user      User     @relation(fields: [userId], references: [pubgId], onDelete: Cascade)
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, matchId])
+  @@index([userId])
+  @@index([matchId])
+  @@map("user_matches")
+}
+
+// API 请求日志表：存储 API 请求的最后时间
+model ApiRequestLog {
+  id          Int      @id @default(autoincrement())
+  requestType String   @unique // 例如："user_match_history", "user_search"
+  lastRequest DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("api_request_logs")
+}
+
+// 赛季表：存储 PUBG 赛季信息（建议一个月刷新一次）
+model Season {
+  id            String   @id
+  isCurrent     Boolean  @default(false)
+  startDate     String?
+  endDate       String?
+  lastFetchedAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@map("seasons")
+}
+
+// 死亡笔记生成表：记录用户请求生成死亡笔记的状态
+model DeathNoteGeneration {
+  id             Int      @id @default(autoincrement())
+  userId         String
+  requestTime    DateTime @default(now())
+  isGenerated    Boolean  @default(false)
+  estimatedEndTime DateTime?
+  actualEndTime  DateTime?
+  firstGenerationDuration Int? // 首次生成耗时（毫秒），用于预估后续增量更新时间
+  lastIncrementalTime DateTime? // 最后一次增量更新时间
+  dailyIncrementalEnabled Boolean @default(true) // 是否启用每日增量
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  @@unique([userId])
+  @@map("death_note_generations")
+}
+
+// 死亡笔记进度表：用于断点续传
+model DeathNoteProgress {
+  userId          String   @id
+  taskId          String
+  totalMatches    Int
+  processedCount  Int      @default(0)
+  processedMatches String // JSON 数组：["match1", "match2", ...]
+  failedMatches   String   @default("[]") // JSON 数组：[{matchId, error, retryCount}]
+  startedAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// 定时任务配置表
+model ScheduledTaskConfig {
+  id          String   @id
+  type        String   @unique // daily_incremental
+  cron        String   // cron 表达式
+  enabled     Boolean  @default(true)
+  lastRun     DateTime?
+  nextRun     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("scheduled_task_configs")
+}
+
+// 异步任务表：记录长时间运行的任务状态
+model Task {
+  id          String   @id @default(cuid())
+  type        String   // 任务类型：reparse_all, reparse_user, reparse_match, death_note_generate, death_note_force_generate, death_note_daily_incremental, death_note_resume
+  userId      String?  // 关联的用户ID（用于用户相关任务）
+  status      String   @default("pending") // pending, running, completed, failed
+  progress    Int      @default(0) // 进度百分比 0-100
+  heartbeat   DateTime? // 最后心跳时间，用于检测任务是否卡死
+  result      String?  // JSON格式的结果数据
+  error       String?  // 错误信息
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([status])
+  @@index([type])
+  @@index([userId])
+  @@map("tasks")
+}
+

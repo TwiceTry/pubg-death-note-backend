@@ -1,0 +1,26 @@
+export const DEATH_NOTE = {
+  MAX_RETRY_COUNT: 2,
+  HEARTBEAT_INTERVAL: 10,
+  HEARTBEAT_TIMEOUT_MS: 5 * 60 * 1000,
+  DEFAULT_PAGE: 1,
+  DEFAULT_PAGE_SIZE: 10,
+  MAX_PAGE_SIZE: 50,
+  CACHE_TTL_SECONDS: 300,
+} as const;
+
+export const PUBG_API = {
+  BASE_URL: 'https://api.pubg.com',
+  RATE_LIMIT_PER_MINUTE: 60,
+  RATE_LIMIT_PER_SECOND: 10,
+  TIMEOUT_MS: 30000,
+} as const;
+
+export const MATCH = {
+  DEFAULT_CACHE_TTL_MS: 24 * 60 * 60 * 1000,
+  TELEMETRY_CHUNK_SIZE: 100,
+} as const;
+
+export const TASK = {
+  STALE_TIMEOUT_MS: 5 * 60 * 1000,
+  CLEANUP_INTERVAL_MS: 60 * 1000,
+} as const;
