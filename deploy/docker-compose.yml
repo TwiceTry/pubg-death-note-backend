@@ -1,0 +1,28 @@
+services:
+  pubg-death-note:
+    image: pubg-death-note:latest
+    container_name: pubg-death-note
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      - PORT=3000
+      - DATABASE_URL=file:/app/data/dev.db
+      - DATABASE_MAX_CONNECTIONS=10
+      - QUEUE_CONCURRENCY=5
+      - LOG_LEVEL=info
+      - LOG_DIR=/app/logs
+      - RATE_LIMIT_TTL=60
+      - RATE_LIMIT_MAX=100
+      - PUBG_API_KEY_1=${PUBG_API_KEY_1}
+      - PUBG_API_REGION=${PUBG_API_REGION:-steam}
+      - PUBG_API_TIMEOUT=30000
+      - PUBG_API_RETRY_COUNT=3
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./game-data:/app/game-data
+    env_file:
+      - .env
