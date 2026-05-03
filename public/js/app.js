@@ -16,14 +16,15 @@ async function loadGameDataI18n() {
     var response = await fetch(getApiBase() + '/death-note/i18n/game-data');
     if (response.ok) {
       var data = await response.json();
-      if (data.success && data.data) {
-        mapNames = data.data.maps || {};
-        gameModes = data.data.gameModes || {};
-        weaponNames = data.data.weapons || {};
+      if (data.success) {
+        mapNames = data.maps || {};
+        gameModes = data.gameModes || {};
+        weaponNames = data.weapons || {};
+        console.log('Game data i18n loaded successfully');
       }
     }
   } catch (e) {
-    console.warn('Failed to load game data i18n, using fallback:', e);
+    console.warn('Failed to load game data i18n:', e);
   }
 }
 
@@ -40,7 +41,11 @@ function translateMode(modeName) {
 function formatWeapon(weaponId) {
   if (!weaponId) return '未知';
   if (weaponNames[weaponId]) return weaponNames[weaponId];
-  return weaponId.replace('Weap', '').replace('_C', '').replace('PlayerMale_A_C', '拳头').replace('PlayerFemale_A_C', '拳头');
+  if (weaponId.includes('PlayerMale_A') || weaponId.includes('PlayerFemale_A')) return '拳头';
+  if (weaponId.startsWith('Weap')) {
+    return weaponId.replace('Weap', '').replace('_C', '').replace(/_/g, ' ');
+  }
+  return weaponId;
 }
 
 function getApiBase() {
