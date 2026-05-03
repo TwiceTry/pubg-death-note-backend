@@ -88,11 +88,18 @@ function formatDate(dateStr) {
   });
 }
 
-function formatDistance(meters) {
+function formatDistance(centimeters) {
+  var meters = centimeters / 100;
   if (meters >= 1000) {
     return (meters / 1000).toFixed(2) + ' km';
   }
-  return Math.round(meters) + ' m';
+  if (meters >= 100) {
+    return Math.round(meters) + ' m';
+  }
+  if (meters >= 1) {
+    return meters.toFixed(1) + ' m';
+  }
+  return Math.round(centimeters) + ' cm';
 }
 
 function toggleCalendar() {
