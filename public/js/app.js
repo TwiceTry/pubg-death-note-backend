@@ -368,11 +368,15 @@ function copyShareLink() {
 }
 
 async function queryVictimHistory() {
-  var myNickname = document.getElementById('victim-nickname').value.trim();
   var targetNickname = document.getElementById('victim-target').value.trim();
 
-  if (!myNickname || !targetNickname) {
-    alert('请填写你的昵称和对方昵称');
+  if (!pageNickname) {
+    alert('请先查询死亡笔记');
+    return;
+  }
+
+  if (!targetNickname) {
+    alert('请填写另一位玩家昵称');
     return;
   }
 
@@ -381,40 +385,40 @@ async function queryVictimHistory() {
   showLoading('result-victim');
 
   try {
-    var url1 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(myNickname) + '/victim/' + encodeURIComponent(targetNickname);
-    var url2 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(myNickname) + '/killed-by/' + encodeURIComponent(targetNickname);
+    var url1 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(pageNickname) + '/victim/' + encodeURIComponent(targetNickname);
+    var url2 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(pageNickname) + '/killed-by/' + encodeURIComponent(targetNickname);
 
     var [res1, res2] = await Promise.all([fetch(url1), fetch(url2)]);
     var data1 = await res1.json();
     var data2 = await res2.json();
 
-    var iKilledThem = (res1.ok && data1.success) ? data1.totalKills : 0;
-    var theyKilledMe = (res2.ok && data2.success) ? data2.totalDeaths : 0;
+    var targetKilledOther = (res1.ok && data1.success) ? data1.totalKills : 0;
+    var otherKilledTarget = (res2.ok && data2.success) ? data2.totalDeaths : 0;
 
-    if (iKilledThem === 0 && theyKilledMe === 0) {
+    if (targetKilledOther === 0 && otherKilledTarget === 0) {
       showSuccess('result-victim',
         '<div class="result-title">查询结果</div>' +
-        '<div class="empty-state">' + escapeHtml(myNickname) + ' 和 ' + escapeHtml(targetNickname) + ' 没有相互击杀记录</div>'
+        '<div class="empty-state">' + escapeHtml(pageNickname) + ' 和 ' + escapeHtml(targetNickname) + ' 没有相互击杀记录</div>'
       );
       return;
     }
 
-    var html = '<div class="result-title">' + escapeHtml(myNickname) + ' vs ' + escapeHtml(targetNickname) + '</div>';
+    var html = '<div class="result-title">' + escapeHtml(pageNickname) + ' vs ' + escapeHtml(targetNickname) + '</div>';
 
     html += '<div class="vs-stats">' +
       '<div class="vs-stat">' +
-      '<div class="vs-stat-value kills">' + iKilledThem + '</div>' +
-      '<div class="vs-stat-label">我击杀TA</div>' +
+      '<div class="vs-stat-value kills">' + targetKilledOther + '</div>' +
+      '<div class="vs-stat-label">' + escapeHtml(pageNickname) + ' 击杀 ' + escapeHtml(targetNickname) + '</div>' +
       '</div>' +
       '<div class="vs-divider">VS</div>' +
       '<div class="vs-stat">' +
-      '<div class="vs-stat-value deaths">' + theyKilledMe + '</div>' +
-      '<div class="vs-stat-label">TA击杀我</div>' +
+      '<div class="vs-stat-value deaths">' + otherKilledTarget + '</div>' +
+      '<div class="vs-stat-label">' + escapeHtml(targetNickname) + ' 击杀 ' + escapeHtml(pageNickname) + '</div>' +
       '</div>' +
       '</div>';
 
-    if (iKilledThem > 0) {
-      var myKillsHtml = data1.killDetails.map(function (kill) {
+    if (targetKilledOther > 0) {
+      var targetKillsHtml = data1.killDetails.map(function (kill) {
         return '<div class="kill-item">' +
           '<div class="kill-left">' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
@@ -428,13 +432,13 @@ async function queryVictimHistory() {
       }).join('');
 
       html += '<div class="vs-section">' +
-        '<div class="vs-section-title kills">我击杀TA (' + iKilledThem + '次)</div>' +
-        myKillsHtml +
+        '<div class="vs-section-title kills">' + escapeHtml(pageNickname) + ' 击杀 ' + escapeHtml(targetNickname) + ' (' + targetKilledOther + '次)</div>' +
+        targetKillsHtml +
         '</div>';
     }
 
-    if (theyKilledMe > 0) {
-      var theirKillsHtml = data2.killDetails.map(function (kill) {
+    if (otherKilledTarget > 0) {
+      var otherKillsHtml = data2.killDetails.map(function (kill) {
         return '<div class="kill-item death-item">' +
           '<div class="kill-left">' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
@@ -448,8 +452,8 @@ async function queryVictimHistory() {
       }).join('');
 
       html += '<div class="vs-section">' +
-        '<div class="vs-section-title deaths">TA击杀我 (' + theyKilledMe + '次)</div>' +
-        theirKillsHtml +
+        '<div class="vs-section-title deaths">' + escapeHtml(targetNickname) + ' 击杀 ' + escapeHtml(pageNickname) + ' (' + otherKilledTarget + '次)</div>' +
+        otherKillsHtml +
         '</div>';
     }
 
@@ -602,9 +606,7 @@ document.querySelectorAll('input').forEach(function (input) {
       document.getElementById('subtitle').innerHTML = '<span>' + escapeHtml(pageNickname) + '</span> 的死亡笔记';
       document.getElementById('deathnote-nickname').value = pageNickname;
       document.getElementById('deathnote-search').style.display = 'none';
-      document.getElementById('victim-target').value = pageNickname;
-      document.getElementById('victim-nickname').placeholder = '输入你的昵称';
-      document.getElementById('guideText').textContent = '输入你的昵称，看看你和 ' + pageNickname + ' 的击杀记录！';
+      document.getElementById('guideText').textContent = '输入另一位玩家昵称，查看 ' + pageNickname + ' 是否被对方击杀或击杀过对方';
       queryDeathNote();
     }
   });

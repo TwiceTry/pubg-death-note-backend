@@ -13,9 +13,14 @@
     <h1>PUBG DEATH NOTE</h1>
     <div class="subtitle" id="subtitle"></div>
 
+    <div id="shareLink" class="share-link" style="display: none;">
+      <div class="share-link-text">专属链接（点击复制）</div>
+      <div class="share-link-url" id="shareLinkUrl" onclick="copyShareLink()"></div>
+    </div>
+
     <div class="tabs" id="tabs">
       <button class="tab active" data-tab="deathnote">死亡笔记</button>
-      <button class="tab" data-tab="victim">我被TA或TA被我击杀过吗？</button>
+      <button class="tab" data-tab="victim">查询被对方击杀过或击杀过对方吗？</button>
     </div>
 
     <div class="panel active" id="panel-deathnote">
@@ -41,26 +46,17 @@
         <div class="calendar-grid" id="calendarGrid"></div>
       </div>
 
-      <div id="shareLink" class="share-link" style="display: none;">
-        <div class="share-link-text">专属链接（点击复制）</div>
-        <div class="share-link-url" id="shareLinkUrl" onclick="copyShareLink()"></div>
-      </div>
-
       <div class="result" id="result-deathnote"></div>
     </div>
 
     <div class="panel" id="panel-victim">
       <div class="victim-guide">
         <div class="guide-icon">🎯</div>
-        <div class="guide-text" id="guideText">输入你的昵称和对方昵称，看看你们之间的击杀记录！</div>
+        <div class="guide-text" id="guideText">先查询死亡笔记，然后输入另一位玩家昵称，查看目标玩家是否被对方击杀或击杀过对方</div>
       </div>
       <div class="form-group">
-        <label>你的昵称</label>
-        <input type="text" id="victim-nickname" placeholder="输入你的PUBG昵称">
-      </div>
-      <div class="form-group">
-        <label>对方昵称</label>
-        <input type="text" id="victim-target" placeholder="输入对方PUBG昵称">
+        <label>另一位玩家昵称</label>
+        <input type="text" id="victim-target" placeholder="输入另一位玩家的PUBG昵称">
       </div>
       <button class="btn" id="btn-victim" onclick="queryVictimHistory()">查询</button>
       <div class="result" id="result-victim"></div>

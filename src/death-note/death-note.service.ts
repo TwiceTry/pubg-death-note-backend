@@ -660,7 +660,7 @@ export class DeathNoteService {
     const matchMap = this.groupEventsByMatch(killEvents, userId);
 
     const allMatches = Array.from(matchMap.values())
-      .filter(match => match.kills > 0)
+      .filter(match => match.kills > 0 || match.deaths > 0)
       .sort((a, b) => {
         const timeA = a.matchTime?.getTime() || 0;
         const timeB = b.matchTime?.getTime() || 0;
