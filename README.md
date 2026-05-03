@@ -1,15 +1,23 @@
-# PUBG Death Note Backend
+# PUBG Death Note
 
-PUBG 死亡笔记后端服务，基于 NestJS + Prisma + SQLite 构建。
+> **你的 PUBG 专属"死亡笔记"——记录每一场对局中的每一次击杀。**
+
+## 项目亮点
+
+**不只是查询击杀记录，还能反向验证：** 支持在已有死亡笔记记录中，查询某个玩家是否曾被击杀过。输入对方昵称，一键查看你被击杀的时间、对局和详细经过。
+
+## 客户端界面
+
+![客户端界面](./docs/screenshot.png)
 
 ## 功能特性
 
-- 自动拉取并解析 PUBG 玩家对局数据
-- 生成玩家"死亡笔记"（击杀记录汇总）
-- 每日增量更新，支持断点续传
-- 面向客户端的 RESTful API
-- 移动端友好的前端页面
-- 多 API Key 轮询，提高并发能力
+- **死亡笔记生成**：自动拉取并解析 PUBG 玩家对局数据，生成完整的击杀记录汇总
+- **每日增量更新**：支持断点续传，每天自动补充新对局数据
+- **反向击杀查询**：在已有记录中查询自己是否被某个玩家击杀过
+- **专属分享链接**：每个玩家拥有专属链接，一键复制分享给好友，随时查看自己的死亡笔记
+- **日历视图**：按日期浏览击杀记录，快速定位特定对局
+- **管理后台**：任务管理、数据同步、死亡笔记生成与列表查看
 
 ## 环境要求
 
@@ -17,87 +25,45 @@ PUBG 死亡笔记后端服务，基于 NestJS + Prisma + SQLite 构建。
 - npm >= 10
 - （可选）Docker & Docker Compose
 
-## 本地开发
+## 快速开始
 
-### 1. 安装依赖
+### 本地开发
 
 ```bash
+# 1. 安装依赖
 npm install
-```
 
-### 2. 配置环境变量
-
-```bash
+# 2. 配置环境变量
 cp .env.example .env
 # 编辑 .env，填入你的 PUBG_API_KEY_1
-```
 
-### 3. 初始化数据库
-
-```bash
+# 3. 初始化数据库
 npx prisma migrate deploy
-```
 
-### 4. 启动服务
-
-```bash
-# 开发模式（热重载）
+# 4. 启动服务
 npm run start:dev
-
-# 生产模式
-npm run build
-npm run start:prod
 ```
 
-服务启动后访问：
-- API: `http://localhost:3000/api/v1`
-- 前端: `http://localhost:3000/n/玩家昵称`
+启动后访问：
+- 客户端: `http://localhost:3000/n/玩家昵称`
+- 管理后台: `http://localhost:3000/admin/`
 
-## Docker 部署
-
-### 1. 配置环境变量
+### Docker 部署
 
 ```bash
-cp .env.example .env
-# 编辑 .env，填入你的 PUBG_API_KEY_1
-```
-
-### 2. 构建并启动
-
-```bash
-docker compose build
-docker compose up -d
-```
-
-### 3. 查看日志
-
-```bash
-docker compose logs -f
-```
-
-### 4. 停止服务
-
-```bash
-docker compose down
-```
-
-数据持久化在 `./data/`、`./logs/` 和 `./game-data/` 目录。
-
-### 从镜像部署
-
-如果你已经下载了镜像：
-
-```bash
-# 加载镜像（如果是 tar 文件）
-docker load -i pubg-death-note.tar
-
-# 配置环境变量
+# 1. 配置环境变量
 cp .env.example .env
 vim .env  # 填入 PUBG_API_KEY_1
 
-# 启动
+# 2. 构建并启动
+docker compose build
 docker compose up -d
+
+# 3. 查看日志
+docker compose logs -f
 ```
+
+数据持久化在 `./data/`、`./logs/` 和 `./game-data/` 目录。
 
 ## 项目结构
 
@@ -105,13 +71,7 @@ docker compose up -d
 ├── src/
 │   ├── main.ts                     # 应用入口
 │   ├── common/                     # 共享工具
-│   │   ├── cache.utils.ts          # 内存缓存
-│   │   ├── error.utils.ts          # 错误处理
-│   │   ├── logging.utils.ts        # 日志格式
-│   │   ├── validation.utils.ts     # 输入验证
-│   │   └── dual-output-logger.service.ts
-│   ├── config/
-│   │   └── env.validation.ts       # 环境变量验证
+│   ├── config/                     # 环境变量验证
 │   ├── constants.ts                # 全局常量
 │   ├── death-note/                 # 客户端模块（查询、展示）
 │   ├── prisma/                     # 数据库模块
@@ -119,9 +79,10 @@ docker compose up -d
 │   ├── scheduled-task/             # 定时任务
 │   └── task/                       # 任务状态管理
 ├── public/                         # 静态前端资源
-│   ├── index.html
+│   ├── index.html                  # 客户端页面
 │   ├── css/style.css
-│   └── js/app.js
+│   ├── js/app.js
+│   └── admin/                      # 管理后台
 ├── prisma/
 │   ├── schema.prisma               # 数据库模型
 │   └── migrations/                 # 数据库迁移
@@ -133,13 +94,13 @@ docker compose up -d
 
 ## API 接口
 
-### 死亡笔记
+### 死亡笔记（客户端）
 
 | 接口 | 说明 |
 |------|------|
 | `GET /api/v1/death-note/nickname/:nickname` | 获取用户死亡笔记状态 |
 | `GET /api/v1/death-note/nickname/:nickname/matches?page=1&pageSize=10` | 分页获取死亡笔记（按天分组） |
-| `GET /api/v1/death-note/nickname/:nickname/victim/:victimNickname` | 查询受害者被击杀记录 |
+| `GET /api/v1/death-note/nickname/:nickname/victim/:victimNickname` | **查询受害者被击杀记录** |
 | `GET /api/v1/death-note/i18n/game-data` | 获取游戏数据翻译对照表 |
 | `POST /api/v1/death-note/nickname/:nickname/generate` | 请求生成死亡笔记 |
 
@@ -150,12 +111,16 @@ docker compose up -d
 | `GET /api/v1/pubg/match/:matchId` | 获取对局详情 |
 | `GET /api/v1/pubg/user/:nickname` | 搜索玩家 |
 
-### 任务管理
+### 任务管理（管理后台）
 
 | 接口 | 说明 |
 |------|------|
-| `GET /api/v1/pubg/tasks` | 获取任务列表 |
+| `GET /api/v1/pubg/tasks/list` | 获取任务列表 |
 | `GET /api/v1/pubg/tasks/:taskId` | 获取任务状态 |
+| `POST /api/v1/pubg/tasks/sync-local-matches` | 同步本地比赛数据 |
+| `POST /api/v1/pubg/tasks/death-note/generate/:nickname` | 生成死亡笔记 |
+| `POST /api/v1/pubg/tasks/death-note/force-generate/:nickname` | 强制重新生成死亡笔记 |
+| `GET /api/v1/pubg/tasks/death-note/list` | 获取所有死亡笔记列表 |
 
 ## 环境变量
 
