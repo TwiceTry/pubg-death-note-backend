@@ -6,13 +6,14 @@ import {
   Param,
   HttpException,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { PubgMatchService } from './pubg-match.service';
 import { PubgDeathNoteService } from './pubg-death-note.service';
 import { PubgUserService } from './pubg-user.service';
 import { TaskService } from '../task/task.service';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
-import { USER_ID_PREFIX, NICKNAME_MIN_LENGTH, NICKNAME_MAX_LENGTH } from './pubg.constants';
+import { USER_ID_PREFIX, NICKNAME_MIN_LENGTH, NICKNAME_MAX_LENGTH, MATCH_ID_MIN_LENGTH } from './pubg.constants';
 
 @Controller('pubg/tasks')
 export class PubgTaskController {
@@ -229,5 +230,81 @@ export class PubgTaskController {
     );
 
     return this.taskCreatedResponse(taskId, 'Death note force generation task created');
+  }
+
+  /**
+   * 创建本地比赛数据同步任务
+   * 读取本地 game-data，同步 match、userMatch、killEvent 到数据库
+   * POST /api/v1/pubg/tasks/sync-local-matches
+   */
+  @Post('sync-local-matches')
+  async createSyncLocalMatchesTask() {
+    const taskId = await this.taskService.createAndExecuteTask(
+      'sync_local_matches',
+      async (taskId: string) => {
+        const result = await this.pubgMatchService.syncLocalMatches(
+          async (current, total, percentage) => {
+            await this.taskService.updateTaskStatus(taskId, 'running', percentage);
+          },
+        );
+        return result;
+      },
+    );
+
+    return this.taskCreatedResponse(taskId, 'Local match sync task created');
+  }
+
+  /**
+   * 重新解析单个比赛的遥测数据
+   * POST /api/v1/pubg/tasks/telemetry/reparse/match/:matchId
+   */
+  @Post('telemetry/reparse/match/:matchId')
+  async reparseMatchTelemetry(@Param('matchId') matchId: string) {
+    if (!matchId || matchId.length < MATCH_ID_MIN_LENGTH) {
+      throw new BadRequestException('Invalid match ID');
+    }
+
+    const taskId = await this.taskService.createAndExecuteTask(
+      'reparse_match',
+      async (taskId: string) => {
+        const result = await this.pubgMatchService.reparseMatchTelemetry(matchId, taskId);
+        return { ...result, matchId };
+      },
+    );
+
+    return this.taskCreatedResponse(taskId, 'Reparse task created');
+  }
+
+  /**
+   * 通过用户昵称获取最新任务状态
+   * GET /api/v1/pubg/tasks/users/nickname/:nickname/task-status
+   */
+  @Get('users/nickname/:nickname/task-status')
+  async getLatestTaskByNickname(@Param('nickname') nickname: string) {
+    if (!nickname || nickname.length < NICKNAME_MIN_LENGTH || nickname.length > NICKNAME_MAX_LENGTH) {
+      throw new HttpException('Invalid nickname', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      const user = await this.pubgUserService.getUserByNickname(nickname);
+
+      if (!user) {
+        throw new HttpException('User not found', HttpStatus.NOT_FOUND);
+      }
+
+      const task = await this.taskService.getLatestTaskByUserId(user.id);
+
+      if (!task) {
+        return this.successResponse({ task: null }, 'No task found for this user');
+      }
+
+      return this.successResponse({ task });
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(`Error getting task status for nickname ${nickname}:`, error);
+      throw new HttpException('Internal server error', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 }

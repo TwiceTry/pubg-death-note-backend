@@ -462,6 +462,115 @@ export class PubgMatchService {
   }
 
   /**
+   * 从比赛数据中提取参与者 ID 列表
+   */
+  private extractParticipants(matchData: any): string[] {
+    const participants = new Set<string>();
+    
+    if (matchData.included && Array.isArray(matchData.included)) {
+      for (const item of matchData.included) {
+        if (item.type === 'participant' && item.attributes?.stats?.playerId) {
+          participants.add(item.attributes.stats.playerId);
+        }
+      }
+    }
+    
+    return Array.from(participants);
+  }
+
+  /**
+   * 同步本地所有 match 数据到数据库
+   * 读取本地 game-data，将 match 添加到 Match 表，
+   * 检查是否有已生成死亡笔记的用户参与，有的话添加 UserMatch 表，
+   * 然后解析到 KillEvent 表
+   * 所有操作使用 upsert，重复数据不会重复添加
+   */
+  async syncLocalMatches(
+    progressCallback: (current: number, total: number, percentage: number) => Promise<void>,
+  ): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; newMatches: number; updatedMatches: number; newUserMatches: number; newKillEvents: number }> {
+    try {
+      const localMatchIds = this.getLocalMatchFiles();
+      const totalMatches = localMatchIds.length;
+
+      if (totalMatches === 0) {
+        return { success: true, message: 'No local match files found', totalMatches: 0, processedMatches: 0, newMatches: 0, updatedMatches: 0, newUserMatches: 0, newKillEvents: 0 };
+      }
+
+      const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
+        where: { isGenerated: true },
+        select: { userId: true },
+      });
+      const deathNoteUserIds = new Set(deathNoteUsers.map(u => u.userId));
+
+      let processedMatches = 0;
+      let newMatches = 0;
+      let updatedMatches = 0;
+      let newUserMatches = 0;
+      let newKillEvents = 0;
+
+      for (const matchId of localMatchIds) {
+        try {
+          const matchData = await this.getMatchOriginalData(matchId);
+          const existingMatch = await this.prisma.match.findUnique({ where: { id: matchId } });
+
+          await this.saveMatch(matchId, matchData);
+
+          if (existingMatch) {
+            updatedMatches++;
+          } else {
+            newMatches++;
+          }
+
+          const participants = this.extractParticipants(matchData);
+          const matchedUsers = participants.filter(p => deathNoteUserIds.has(p));
+
+          if (matchedUsers.length > 0) {
+            for (const userId of matchedUsers) {
+              await this.prisma.userMatch.upsert({
+                where: {
+                  userId_matchId: { userId, matchId },
+                },
+                update: {},
+                create: { userId, matchId },
+              });
+              newUserMatches++;
+            }
+          }
+
+          if (matchData.telemetryEvents?.length > 0) {
+            const killEvents = matchData.telemetryEvents.filter(event =>
+              event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill',
+            );
+            newKillEvents += killEvents.length;
+            await this.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
+          }
+
+          processedMatches++;
+          await progressCallback(processedMatches, totalMatches, Math.round((processedMatches / totalMatches) * 100));
+        } catch (error) {
+          this.logger.warn(`Failed to sync match ${matchId}: ${error.message}`);
+          processedMatches++;
+          await progressCallback(processedMatches, totalMatches, Math.round((processedMatches / totalMatches) * 100));
+        }
+      }
+
+      return {
+        success: true,
+        message: `Local match sync completed: ${processedMatches}/${totalMatches} matches`,
+        totalMatches,
+        processedMatches,
+        newMatches,
+        updatedMatches,
+        newUserMatches,
+        newKillEvents,
+      };
+    } catch (error) {
+      this.logger.error('Error syncing local matches:', error);
+      return { success: false, message: error.message || 'Unknown error', totalMatches: 0, processedMatches: 0, newMatches: 0, updatedMatches: 0, newUserMatches: 0, newKillEvents: 0 };
+    }
+  }
+
+  /**
    * 重解析所有用户比赛遥测数据（带进度回调）
    */
   async reparseAllTelemetryWithProgress(
