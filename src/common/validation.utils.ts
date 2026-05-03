@@ -15,10 +15,10 @@ export function validatePaginationParams(page?: string, pageSize?: string): { pa
 }
 
 export function validateNickname(nickname: string): void {
-  const NICKNAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_-]{3,15}$/;
+  const NICKNAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_-]{3,15}$/;
   if (!NICKNAME_REGEX.test(nickname)) {
     throw new BadRequestException(
-      'Invalid nickname format. Must start with a letter, 4-16 characters, only letters, numbers, underscores, and hyphens allowed.',
+      'Invalid nickname format. Must be 4-16 characters, only letters, numbers, underscores, and hyphens allowed.',
     );
   }
 }
