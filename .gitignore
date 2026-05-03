@@ -43,6 +43,9 @@ Thumbs.db
 .env.production.local
 .env.local
 
+# Admin token file
+.admin-token
+
 # Data & Runtime
 /data
 /logs

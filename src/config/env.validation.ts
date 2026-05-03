@@ -41,6 +41,9 @@ export const envSchema = Joi.object({
   // 安全配置
   CORS_ORIGINS: Joi.string().default('*').description('CORS 允许的来源'),
   
+  // 管理端鉴权
+  ADMIN_API_TOKEN: Joi.string().optional().description('管理端 API 鉴权 Token（未配置时自动生成随机 Token）'),
+  
   // 对局数据配置
   GAME_DATA_DIR: Joi.string().default('./game-data').description('对局数据存储目录（包含对局详情和遥测数据）')
 });

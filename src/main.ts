@@ -6,18 +6,44 @@ import { PrismaService } from './prisma/prisma.service';
 import { TaskService } from './task/task.service';
 import { PubgDeathNoteService } from './pubg/pubg-death-note.service';
 import { join } from 'path';
+import { randomBytes } from 'crypto';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+
+const ADMIN_TOKEN_FILE = process.env.NODE_ENV === 'production'
+  ? join('/app/data', '.admin-token')
+  : join(process.cwd(), '.admin-token');
+
+function loadOrGenerateAdminToken(logger: DualOutputLoggerService): string {
+  if (process.env.ADMIN_API_TOKEN) {
+    writeFileSync(ADMIN_TOKEN_FILE, process.env.ADMIN_API_TOKEN);
+    logger.log('Admin API token loaded from environment and saved to file', 'Bootstrap');
+    return process.env.ADMIN_API_TOKEN;
+  }
+
+  if (existsSync(ADMIN_TOKEN_FILE)) {
+    const token = readFileSync(ADMIN_TOKEN_FILE, 'utf-8').trim();
+    logger.log('Admin API token loaded from file', 'Bootstrap');
+    return token;
+  }
+
+  const token = randomBytes(32).toString('hex');
+  writeFileSync(ADMIN_TOKEN_FILE, token);
+  logger.log(`Generated admin API token: ${token}`, 'Bootstrap');
+  logger.log('Token saved to .admin-token file', 'Bootstrap');
+  return token;
+}
 
 async function bootstrap() {
   const logger = new DualOutputLoggerService();
+
+  process.env.ADMIN_API_TOKEN = loadOrGenerateAdminToken(logger);
   
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger,
     bufferLogs: true,
   });
   
-  const publicPath = process.env.NODE_ENV === 'production'
-    ? join(__dirname, '..', 'public')
-    : join(__dirname, '..', '..', 'public');
+  const publicPath = join(__dirname, '..', 'public');
   
   app.useStaticAssets(publicPath);
   app.setGlobalPrefix('api/v1');

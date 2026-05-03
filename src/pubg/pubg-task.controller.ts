@@ -8,14 +8,17 @@ import {
   HttpException,
   HttpStatus,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { PubgMatchService } from './pubg-match.service';
 import { PubgDeathNoteService } from './pubg-death-note.service';
 import { PubgUserService } from './pubg-user.service';
 import { TaskService } from '../task/task.service';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
+import { AdminAuthGuard } from '../common/admin-auth.guard';
 import { USER_ID_PREFIX, NICKNAME_MIN_LENGTH, NICKNAME_MAX_LENGTH, MATCH_ID_MIN_LENGTH } from './pubg.constants';
 
+@UseGuards(AdminAuthGuard)
 @Controller('pubg/tasks')
 export class PubgTaskController {
   constructor(

@@ -2,6 +2,50 @@ const API_BASE = '/api/v1/pubg';
 
 let activeTaskId = null;
 
+function getAdminToken() {
+  return document.getElementById('adminToken').value.trim();
+}
+
+function saveToken(token) {
+  localStorage.setItem('adminToken', token);
+}
+
+function loadToken() {
+  const token = localStorage.getItem('adminToken');
+  if (token) {
+    document.getElementById('adminToken').value = token;
+  }
+}
+
+function toggleTokenVisibility() {
+  const input = document.getElementById('adminToken');
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function apiFetch(url, options = {}) {
+  const token = getAdminToken();
+  const res = await fetch(`${API_BASE}${url}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-token': token,
+      ...options.headers,
+    },
+  });
+
+  if (res.status === 401) {
+    throw new Error('鉴权失败，请检查 Admin Token');
+  }
+
+  return res;
+}
+
+loadToken();
+
+document.getElementById('adminToken').addEventListener('input', (e) => {
+  saveToken(e.target.value.trim());
+});
+
 // Tab 切换
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', (e) => {
@@ -41,7 +85,7 @@ const taskLimit = 20;
 
 async function loadTaskList() {
   try {
-    const res = await fetch(`${API_BASE}/tasks/list?page=${taskPage}&limit=${taskLimit}`);
+    const res = await apiFetch(`/tasks/list?page=${taskPage}&limit=${taskLimit}`);
     const data = await res.json();
     const container = document.getElementById('taskList');
 
@@ -96,7 +140,7 @@ async function syncLocalMatches() {
   document.getElementById('syncResult').className = 'result-box';
 
   try {
-    const res = await fetch(`${API_BASE}/tasks/sync-local-matches`, { method: 'POST' });
+    const res = await apiFetch('/tasks/sync-local-matches', { method: 'POST' });
     const data = await res.json();
 
     if (!data.success) {
@@ -110,7 +154,7 @@ async function syncLocalMatches() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const statusRes = await fetch(`${API_BASE}/tasks/${taskId}`);
+        const statusRes = await apiFetch(`/tasks/${taskId}`);
         const statusData = await statusRes.json();
 
         if (!statusData.success || !statusData.task) {
@@ -165,7 +209,7 @@ async function reparseMatch() {
   showResult('reparseResult', '正在创建重解析任务...', 'info');
 
   try {
-    const res = await fetch(`${API_BASE}/tasks/telemetry/reparse/match/${matchId}`, { method: 'POST' });
+    const res = await apiFetch(`/tasks/telemetry/reparse/match/${matchId}`, { method: 'POST' });
     const data = await res.json();
 
     if (!data.success) {
@@ -179,7 +223,7 @@ async function reparseMatch() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const statusRes = await fetch(`${API_BASE}/tasks/${taskId}`);
+        const statusRes = await apiFetch(`/tasks/${taskId}`);
         const statusData = await statusRes.json();
 
         if (!statusData.success || !statusData.task) {
@@ -222,7 +266,7 @@ async function reparseAll() {
   showResult('reparseResult', '正在创建全局重解析任务...', 'info');
 
   try {
-    const res = await fetch(`${API_BASE}/tasks/reparse/all`, { method: 'POST' });
+    const res = await apiFetch('/tasks/reparse/all', { method: 'POST' });
     const data = await res.json();
 
     if (!data.success) {
@@ -236,7 +280,7 @@ async function reparseAll() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const statusRes = await fetch(`${API_BASE}/tasks/${taskId}`);
+        const statusRes = await apiFetch(`/tasks/${taskId}`);
         const statusData = await statusRes.json();
 
         if (!statusData.success || !statusData.task) {
@@ -281,7 +325,7 @@ async function generateDeathNote() {
   showResult('deathnoteResult', '正在创建生成任务...', 'info');
 
   try {
-    const res = await fetch(`${API_BASE}/tasks/death-note/generate/${encodeURIComponent(nickname)}`, { method: 'POST' });
+    const res = await apiFetch(`/tasks/death-note/generate/${encodeURIComponent(nickname)}`, { method: 'POST' });
 
     if (res.status === 409) {
       showResult('deathnoteResult', '该用户已有任务正在运行，请等待完成后再试', 'error');
@@ -303,7 +347,7 @@ async function generateDeathNote() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const statusRes = await fetch(`${API_BASE}/tasks/${taskId}`);
+        const statusRes = await apiFetch(`/tasks/${taskId}`);
         const statusData = await statusRes.json();
 
         if (!statusData.success || !statusData.task) {
@@ -363,7 +407,7 @@ async function forceGenerateDeathNote() {
   showResult('deathnoteResult', '正在创建强制生成任务...', 'info');
 
   try {
-    const res = await fetch(`${API_BASE}/tasks/death-note/force-generate/${encodeURIComponent(nickname)}`, { method: 'POST' });
+    const res = await apiFetch(`/tasks/death-note/force-generate/${encodeURIComponent(nickname)}`, { method: 'POST' });
     const data = await res.json();
 
     if (!data.success) {
@@ -378,7 +422,7 @@ async function forceGenerateDeathNote() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const statusRes = await fetch(`${API_BASE}/tasks/${taskId}`);
+        const statusRes = await apiFetch(`/tasks/${taskId}`);
         const statusData = await statusRes.json();
 
         if (!statusData.success || !statusData.task) {

@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PUBG Death Note - 管理后台</title>
-  <link rel="stylesheet" href="/admin/css/style.css?v=1">
+  <link rel="stylesheet" href="/admin/css/style.css?v=2">
 </head>
 
 <body>
@@ -23,6 +23,10 @@
   <div class="main-content">
     <div class="topbar">
       <h1 id="pageTitle">任务管理</h1>
+      <div class="token-input-group">
+        <input type="password" id="adminToken" placeholder="Admin Token" class="token-input">
+        <button class="btn btn-sm" onclick="toggleTokenVisibility()">显示</button>
+      </div>
     </div>
 
     <div class="content-area">
@@ -96,7 +100,7 @@
     </div>
   </div>
 
-  <script src="/admin/js/app.js?v=1"></script>
+  <script src="/admin/js/app.js?v=2"></script>
 </body>
 
 </html>
