@@ -267,6 +267,20 @@ export class PubgTaskController {
   }
 
   /**
+   * 获取所有死亡笔记列表
+   * GET /api/v1/pubg/tasks/death-note/list
+   */
+  @Get('death-note/list')
+  async getDeathNoteList() {
+    const deathNotes = await this.pubgDeathNoteService.getAllDeathNotes();
+    return {
+      success: true,
+      data: deathNotes,
+      total: deathNotes.length,
+    };
+  }
+
+  /**
    * 创建本地比赛数据同步任务
    * 读取本地 game-data，同步 match、userMatch、killEvent 到数据库
    * POST /api/v1/pubg/tasks/sync-local-matches

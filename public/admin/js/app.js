@@ -2,6 +2,8 @@ const API_BASE = '/api/v1/pubg';
 
 let activeTaskId = null;
 
+// ==================== Token 管理 ====================
+
 function getAdminToken() {
   return document.getElementById('adminToken').value.trim();
 }
@@ -46,12 +48,12 @@ document.getElementById('adminToken').addEventListener('input', (e) => {
   saveToken(e.target.value.trim());
 });
 
-// Tab 切换
+// ==================== Tab 切换 ====================
+
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', (e) => {
     e.preventDefault();
-    const tab = item.dataset.tab;
-    switchTab(tab);
+    switchTab(item.dataset.tab);
   });
 });
 
@@ -66,7 +68,8 @@ function switchTab(tab) {
   document.getElementById('pageTitle').textContent = titles[tab] || '';
 }
 
-// 工具函数
+// ==================== 工具函数 ====================
+
 function showResult(containerId, message, type = 'info') {
   const el = document.getElementById(containerId);
   el.className = `result-box ${type}`;
@@ -75,11 +78,11 @@ function showResult(containerId, message, type = 'info') {
 
 function formatDate(dateStr) {
   if (!dateStr) return '-';
-  const d = new Date(dateStr);
-  return d.toLocaleString('zh-CN', { hour12: false });
+  return new Date(dateStr).toLocaleString('zh-CN', { hour12: false });
 }
 
-// 加载任务列表
+// ==================== 任务管理 ====================
+
 let taskPage = 1;
 const taskLimit = 20;
 
@@ -126,7 +129,8 @@ function changeTaskPage(delta) {
   loadTaskList();
 }
 
-// 同步本地比赛数据
+// ==================== 数据同步 ====================
+
 async function syncLocalMatches() {
   const btn = document.getElementById('btnSync');
   const progressContainer = document.getElementById('syncProgress');
@@ -196,7 +200,6 @@ async function syncLocalMatches() {
   }
 }
 
-// 重解析单场比赛
 async function reparseMatch() {
   const matchId = document.getElementById('reparseMatchId').value.trim();
   if (!matchId) {
@@ -259,7 +262,6 @@ async function reparseMatch() {
   }
 }
 
-// 重解析全部
 async function reparseAll() {
   const btn = document.getElementById('btnReparseAll');
   btn.disabled = true;
@@ -312,7 +314,8 @@ async function reparseAll() {
   }
 }
 
-// 生成/更新死亡笔记
+// ==================== 死亡笔记 ====================
+
 async function generateDeathNote() {
   const nickname = document.getElementById('deathnoteNickname').value.trim();
   if (!nickname) {
@@ -390,7 +393,6 @@ async function generateDeathNote() {
   }
 }
 
-// 强制重新生成死亡笔记
 async function forceGenerateDeathNote() {
   const nickname = document.getElementById('deathnoteNickname').value.trim();
   if (!nickname) {
@@ -462,5 +464,64 @@ async function forceGenerateDeathNote() {
   }
 }
 
-// 页面加载时刷新任务列表
+async function loadDeathNoteList() {
+  try {
+    const res = await apiFetch('/tasks/death-note/list');
+    const data = await res.json();
+    const container = document.getElementById('deathNoteList');
+
+    if (!data.success || !data.data || data.data.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无死亡笔记记录</div>';
+      return;
+    }
+
+    let html = `
+      <table class="death-note-table">
+        <thead>
+          <tr>
+            <th>昵称</th>
+            <th>生成状态</th>
+            <th>最近任务</th>
+            <th>进度</th>
+            <th>每日增量</th>
+            <th>请求时间</th>
+            <th>完成时间</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    for (const note of data.data) {
+      const statusClass = note.isGenerated ? 'completed' : 'pending';
+      const statusText = note.isGenerated ? '已生成' : '生成中';
+      const incrementalText = note.dailyIncrementalEnabled ? '启用' : '禁用';
+      const incrementalClass = note.dailyIncrementalEnabled ? 'enabled' : 'disabled';
+
+      html += `
+        <tr>
+          <td class="nickname-cell">${note.nickname}</td>
+          <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+          <td>${note.latestTaskType || '-'}</td>
+          <td>
+            <div class="mini-progress">
+              <div class="mini-progress-bar" style="width: ${note.latestTaskProgress}%"></div>
+              <span>${note.latestTaskProgress}%</span>
+            </div>
+          </td>
+          <td><span class="incremental-badge ${incrementalClass}">${incrementalText}</span></td>
+          <td>${formatDate(note.requestTime)}</td>
+          <td>${note.actualEndTime ? formatDate(note.actualEndTime) : '-'}</td>
+        </tr>
+      `;
+    }
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (err) {
+    showResult('deathNoteList', '加载失败: ' + err.message, 'error');
+  }
+}
+
+// ==================== 初始化 ====================
+
 loadTaskList();

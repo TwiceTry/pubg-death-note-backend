@@ -719,6 +719,50 @@ export class PubgDeathNoteService {
     return Array.from(participants);
   }
 
+  async getAllDeathNotes(): Promise<any[]> {
+    const generations = await this.prisma.deathNoteGeneration.findMany({
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const results: any[] = [];
+    for (const gen of generations) {
+      let nickname = gen.userId;
+      try {
+        const user = await this.prisma.user.findUnique({
+          where: { pubgId: gen.userId },
+          select: { nickname: true },
+        });
+        if (user) {
+          nickname = user.nickname;
+        }
+      } catch {
+        // ignore
+      }
+
+      const latestTask = await this.prisma.task.findFirst({
+        where: { userId: gen.userId },
+        orderBy: { createdAt: 'desc' },
+        select: { status: true, progress: true, type: true },
+      });
+
+      results.push({
+        userId: gen.userId,
+        nickname,
+        isGenerated: gen.isGenerated,
+        requestTime: gen.requestTime,
+        actualEndTime: gen.actualEndTime,
+        lastIncrementalTime: gen.lastIncrementalTime,
+        dailyIncrementalEnabled: gen.dailyIncrementalEnabled,
+        firstGenerationDuration: gen.firstGenerationDuration,
+        latestTaskStatus: latestTask?.status || null,
+        latestTaskProgress: latestTask?.progress || 0,
+        latestTaskType: latestTask?.type || null,
+      });
+    }
+
+    return results;
+  }
+
   /**
    * 更新任务进度
    */
