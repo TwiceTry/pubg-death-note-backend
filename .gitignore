@@ -104,3 +104,8 @@ yarn.lock
 
 
 /game-data*
+
+# gzip
+*.tar    
+
+

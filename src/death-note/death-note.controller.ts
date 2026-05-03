@@ -283,42 +283,42 @@ export class DeathNoteController {
   }
 
   /**
-   * 请求生成死亡笔记
+   * 请求生成死亡笔记（已停用，仅保留管理后台生成）
    * POST /api/v1/death-note/nickname/:nickname/generate
    */
-  @Post('nickname/:nickname/generate')
-  async requestDeathNoteGeneration(@Param('nickname') nickname: string) {
-    try {
-      validateNickname(nickname);
-      const result = await this.deathNoteService.requestDeathNoteGeneration(nickname);
-      return this.successResponse(result, 'Death note generation task created');
-    } catch (error) {
-      this.logger.error(`Error requesting death note generation for ${nickname}:`, error);
-      throw new HttpException(
-        error.message || 'Failed to request death note generation',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
+  // @Post('nickname/:nickname/generate')
+  // async requestDeathNoteGeneration(@Param('nickname') nickname: string) {
+  //   try {
+  //     validateNickname(nickname);
+  //     const result = await this.deathNoteService.requestDeathNoteGeneration(nickname);
+  //     return this.successResponse(result, 'Death note generation task created');
+  //   } catch (error) {
+  //     this.logger.error(`Error requesting death note generation for ${nickname}:`, error);
+  //     throw new HttpException(
+  //       error.message || 'Failed to request death note generation',
+  //       HttpStatus.INTERNAL_SERVER_ERROR,
+  //     );
+  //   }
+  // }
 
   /**
-   * 强制重新生成死亡笔记
+   * 强制重新生成死亡笔记（已停用，仅保留管理后台生成）
    * POST /api/v1/death-note/nickname/:nickname/generate/force
    */
-  @Post('nickname/:nickname/generate/force')
-  async forceDeathNoteGeneration(@Param('nickname') nickname: string) {
-    try {
-      validateNickname(nickname);
-      const result = await this.deathNoteService.forceDeathNoteGeneration(nickname);
-      return this.successResponse(result, 'Force death note generation task created');
-    } catch (error) {
-      this.logger.error(`Error force generating death note for ${nickname}:`, error);
-      throw new HttpException(
-        error.message || 'Failed to force generate death note',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
+  // @Post('nickname/:nickname/generate/force')
+  // async forceDeathNoteGeneration(@Param('nickname') nickname: string) {
+  //   try {
+  //     validateNickname(nickname);
+  //     const result = await this.deathNoteService.forceDeathNoteGeneration(nickname);
+  //     return this.successResponse(result, 'Force death note generation task created');
+  //   } catch (error) {
+  //     this.logger.error(`Error force generating death note for ${nickname}:`, error);
+  //     throw new HttpException(
+  //       error.message || 'Failed to force generate death note',
+  //       HttpStatus.INTERNAL_SERVER_ERROR,
+  //     );
+  //   }
+  // }
 
   /**
    * 手动刷新赛季信息

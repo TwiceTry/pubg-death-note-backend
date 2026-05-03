@@ -102,7 +102,8 @@ docker compose logs -f
 | `GET /api/v1/death-note/nickname/:nickname/matches?page=1&pageSize=10` | 分页获取死亡笔记（按天分组） |
 | `GET /api/v1/death-note/nickname/:nickname/victim/:victimNickname` | **查询受害者被击杀记录** |
 | `GET /api/v1/death-note/i18n/game-data` | 获取游戏数据翻译对照表 |
-| `POST /api/v1/death-note/nickname/:nickname/generate` | 请求生成死亡笔记 |
+
+> 注：死亡笔记生成功能已移至管理后台，客户端不再提供生成接口。
 
 ### 对局管理
 
