@@ -141,6 +141,11 @@ export class PubgDeathNoteService {
       await this.updateProgress(taskId, 5);
       await this.fetchAllMatches(matchIds, taskId);
 
+      if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+        this.logger.log(`Task ${taskId} was cancelled after fetchAllMatches, aborting force generation`);
+        throw new Error('Task was cancelled');
+      }
+
       this.logger.log(`All matches fetched, processing local match data...`);
       await this.updateProgress(taskId, 40);
 
@@ -148,6 +153,11 @@ export class PubgDeathNoteService {
       this.logger.log(`Found ${localMatchFiles.length} local match files`);
 
       await this.processLocalMatches(userId, localMatchFiles, taskId);
+
+      if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+        this.logger.log(`Task ${taskId} was cancelled after processLocalMatches, aborting force generation`);
+        throw new Error('Task was cancelled');
+      }
 
       await this.prisma.deathNoteGeneration.upsert({
         where: { userId },
@@ -599,6 +609,10 @@ export class PubgDeathNoteService {
    */
   private async fetchAllMatches(matchIds: string[], taskId?: string): Promise<void> {
     for (let i = 0; i < matchIds.length; i++) {
+      if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+        this.logger.log(`Task ${taskId} was cancelled, stopping fetchAllMatches`);
+        return;
+      }
       const matchId = matchIds[i];
       try {
         this.logger.log(`Fetching match ${matchId} (${i + 1}/${matchIds.length})...`);
@@ -612,11 +626,12 @@ export class PubgDeathNoteService {
     }
   }
 
-  /**
-   * 处理本地比赛文件
-   */
   private async processLocalMatches(userId: string, matchIds: string[], taskId?: string): Promise<void> {
     for (let i = 0; i < matchIds.length; i++) {
+      if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+        this.logger.log(`Task ${taskId} was cancelled, stopping processLocalMatches`);
+        return;
+      }
       const matchId = matchIds[i];
       try {
         let match = await this.prisma.match.findUnique({ where: { id: matchId } });
