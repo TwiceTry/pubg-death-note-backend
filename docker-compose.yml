@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   pubg-death-note:
     build: .
@@ -19,8 +17,6 @@ services:
       - RATE_LIMIT_TTL=60
       - RATE_LIMIT_MAX=100
       - PUBG_API_KEY_1=${PUBG_API_KEY_1}
-      - PUBG_API_KEY_2=${PUBG_API_KEY_2}
-      - PUBG_API_KEY_3=${PUBG_API_KEY_3}
       - PUBG_API_REGION=${PUBG_API_REGION:-steam}
       - PUBG_API_TIMEOUT=30000
       - PUBG_API_RETRY_COUNT=3
