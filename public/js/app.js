@@ -232,7 +232,7 @@ function renderDays(days, title) {
     var matchesHtml = day.matches.map(function (match, idx) {
       var killsHtml = '';
       if (match.killDetails.length > 0) {
-        killsHtml = match.killDetails.map(function (kill) {
+        killsHtml = '<div class="kill-section-title">击杀</div>' + match.killDetails.map(function (kill) {
           return '<div class="kill-item">' +
             '<div class="kill-left">' +
             '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
@@ -241,6 +241,22 @@ function renderDays(days, title) {
             '<div class="kill-right">' +
             (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
             '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
+            '</div>' +
+            '</div>';
+        }).join('');
+      }
+
+      var deathsHtml = '';
+      if (match.deathDetails.length > 0) {
+        deathsHtml = '<div class="death-section-title">被击杀</div>' + match.deathDetails.map(function (death) {
+          return '<div class="kill-item death-item">' +
+            '<div class="kill-left">' +
+            '<span class="kill-weapon">' + escapeHtml(formatWeapon(death.weaponId)) + '</span>' +
+            '<span class="kill-victim">被 <strong>' + escapeHtml(death.killerName) + '</strong> 击杀</span>' +
+            '</div>' +
+            '<div class="kill-right">' +
+            (death.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
+            '<span class="kill-distance">' + formatDistance(death.distance) + '</span>' +
             '</div>' +
             '</div>';
         }).join('');
@@ -270,7 +286,7 @@ function renderDays(days, title) {
         '</div>' +
         '</div>' +
         '<div class="match-details" id="' + matchId + '-details">' +
-        '<div class="match-details-inner">' + killsHtml + '</div>' +
+        '<div class="match-details-inner">' + killsHtml + deathsHtml + '</div>' +
         '</div>' +
         '</div>';
     }).join('');
@@ -352,11 +368,11 @@ function copyShareLink() {
 }
 
 async function queryVictimHistory() {
-  var nickname = document.getElementById('victim-nickname').value.trim();
-  var target = pageNickname || nickname;
+  var myNickname = document.getElementById('victim-nickname').value.trim();
+  var targetNickname = document.getElementById('victim-target').value.trim();
 
-  if (!target) {
-    alert('请先查询死亡笔记');
+  if (!myNickname || !targetNickname) {
+    alert('请填写你的昵称和对方昵称');
     return;
   }
 
@@ -365,40 +381,79 @@ async function queryVictimHistory() {
   showLoading('result-victim');
 
   try {
-    var url = getApiBase() + '/death-note/nickname/' + encodeURIComponent(target) + '/victim/' + encodeURIComponent(nickname);
-    var response = await fetch(url);
-    var data = await response.json();
+    var url1 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(myNickname) + '/victim/' + encodeURIComponent(targetNickname);
+    var url2 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(myNickname) + '/killed-by/' + encodeURIComponent(targetNickname);
 
-    if (!response.ok || !data.success) {
-      showError('result-victim', data.message || data.error || '请求失败');
-      return;
-    }
+    var [res1, res2] = await Promise.all([fetch(url1), fetch(url2)]);
+    var data1 = await res1.json();
+    var data2 = await res2.json();
 
-    if (data.totalKills === 0) {
+    var iKilledThem = (res1.ok && data1.success) ? data1.totalKills : 0;
+    var theyKilledMe = (res2.ok && data2.success) ? data2.totalDeaths : 0;
+
+    if (iKilledThem === 0 && theyKilledMe === 0) {
       showSuccess('result-victim',
         '<div class="result-title">查询结果</div>' +
-        '<div class="empty-state">' + escapeHtml(target) + ' 没有击杀过 ' + escapeHtml(nickname) + '</div>'
+        '<div class="empty-state">' + escapeHtml(myNickname) + ' 和 ' + escapeHtml(targetNickname) + ' 没有相互击杀记录</div>'
       );
       return;
     }
 
-    var killsHtml = data.killDetails.map(function (kill) {
-      return '<div class="kill-item">' +
-        '<div class="kill-left">' +
-        '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
-        '<span class="kill-victim">' + escapeHtml(kill.victimName) + '</span>' +
-        '</div>' +
-        '<div class="kill-right">' +
-        (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
-        '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
-        '</div>' +
-        '</div>';
-    }).join('');
+    var html = '<div class="result-title">' + escapeHtml(myNickname) + ' vs ' + escapeHtml(targetNickname) + '</div>';
 
-    showSuccess('result-victim',
-      '<div class="result-title">' + escapeHtml(target) + ' 共击杀 ' + escapeHtml(nickname) + ' ' + data.totalKills + ' 次</div>' +
-      '<div style="margin-top: 15px;">' + killsHtml + '</div>'
-    );
+    html += '<div class="vs-stats">' +
+      '<div class="vs-stat">' +
+      '<div class="vs-stat-value kills">' + iKilledThem + '</div>' +
+      '<div class="vs-stat-label">我击杀TA</div>' +
+      '</div>' +
+      '<div class="vs-divider">VS</div>' +
+      '<div class="vs-stat">' +
+      '<div class="vs-stat-value deaths">' + theyKilledMe + '</div>' +
+      '<div class="vs-stat-label">TA击杀我</div>' +
+      '</div>' +
+      '</div>';
+
+    if (iKilledThem > 0) {
+      var myKillsHtml = data1.killDetails.map(function (kill) {
+        return '<div class="kill-item">' +
+          '<div class="kill-left">' +
+          '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
+          '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
+          '</div>' +
+          '<div class="kill-right">' +
+          (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
+          '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+
+      html += '<div class="vs-section">' +
+        '<div class="vs-section-title kills">我击杀TA (' + iKilledThem + '次)</div>' +
+        myKillsHtml +
+        '</div>';
+    }
+
+    if (theyKilledMe > 0) {
+      var theirKillsHtml = data2.killDetails.map(function (kill) {
+        return '<div class="kill-item death-item">' +
+          '<div class="kill-left">' +
+          '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
+          '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
+          '</div>' +
+          '<div class="kill-right">' +
+          (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
+          '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+
+      html += '<div class="vs-section">' +
+        '<div class="vs-section-title deaths">TA击杀我 (' + theyKilledMe + '次)</div>' +
+        theirKillsHtml +
+        '</div>';
+    }
+
+    showSuccess('result-victim', '<div style="margin-top: 15px;">' + html + '</div>');
   } catch (error) {
     showError('result-victim', error.message);
   } finally {
@@ -547,8 +602,9 @@ document.querySelectorAll('input').forEach(function (input) {
       document.getElementById('subtitle').innerHTML = '<span>' + escapeHtml(pageNickname) + '</span> 的死亡笔记';
       document.getElementById('deathnote-nickname').value = pageNickname;
       document.getElementById('deathnote-search').style.display = 'none';
-      document.getElementById('victim-nickname').placeholder = '输入你的昵称，查询是否被 ' + pageNickname + ' 击杀过';
-      document.getElementById('guideText').textContent = '输入你的昵称，看看你有没有被 ' + pageNickname + ' 击杀过！';
+      document.getElementById('victim-target').value = pageNickname;
+      document.getElementById('victim-nickname').placeholder = '输入你的昵称';
+      document.getElementById('guideText').textContent = '输入你的昵称，看看你和 ' + pageNickname + ' 的击杀记录！';
       queryDeathNote();
     }
   });

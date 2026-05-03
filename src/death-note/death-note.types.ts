@@ -69,6 +69,7 @@ export interface VictimKillHistoryResponse {
   victimId: string;
   victimNickname: string;
   totalKills: number;
+  totalDeaths: number;
   killDetails: VictimKillDetail[];
 }
 
@@ -91,6 +92,7 @@ export interface MatchKillDetail {
   gameMode: string | null;
   weaponId: string;
   victimName: string;
+  killerName: string;
   distance: number;
   isHeadshot: boolean;
   timestamp: Date;
@@ -104,6 +106,7 @@ export interface MatchGroup {
   kills: number;
   deaths: number;
   killDetails: MatchKillDetail[];
+  deathDetails: MatchKillDetail[];
 }
 
 export interface DayMatchGroup {

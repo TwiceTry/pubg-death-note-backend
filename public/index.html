@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>PUBG Death Note</title>
-  <link rel="stylesheet" href="/css/style.css?v=3">
+  <link rel="stylesheet" href="/css/style.css?v=5">
 </head>
 
 <body>
@@ -15,7 +15,7 @@
 
     <div class="tabs" id="tabs">
       <button class="tab active" data-tab="deathnote">死亡笔记</button>
-      <button class="tab" data-tab="victim">我被他击杀过吗？</button>
+      <button class="tab" data-tab="victim">我被TA或TA被我击杀过吗？</button>
     </div>
 
     <div class="panel active" id="panel-deathnote">
@@ -52,18 +52,22 @@
     <div class="panel" id="panel-victim">
       <div class="victim-guide">
         <div class="guide-icon">🎯</div>
-        <div class="guide-text" id="guideText">想知道你有没有被击杀过？输入你的昵称，马上告诉你结果！</div>
+        <div class="guide-text" id="guideText">输入你的昵称和对方昵称，看看你们之间的击杀记录！</div>
       </div>
       <div class="form-group">
         <label>你的昵称</label>
         <input type="text" id="victim-nickname" placeholder="输入你的PUBG昵称">
+      </div>
+      <div class="form-group">
+        <label>对方昵称</label>
+        <input type="text" id="victim-target" placeholder="输入对方PUBG昵称">
       </div>
       <button class="btn" id="btn-victim" onclick="queryVictimHistory()">查询</button>
       <div class="result" id="result-victim"></div>
     </div>
   </div>
 
-  <script src="/js/app.js?v=3"></script>
+  <script src="/js/app.js?v=5"></script>
 </body>
 
 </html>

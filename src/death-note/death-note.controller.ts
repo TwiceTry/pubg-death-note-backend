@@ -98,6 +98,35 @@ export class DeathNoteController {
   }
 
   /**
+   * 查询指定昵称的玩家是否击杀过当前用户
+   * GET /api/v1/death-note/nickname/:nickname/killed-by/:killerNickname
+   */
+  @Get('nickname/:nickname/killed-by/:killerNickname')
+  async getKilledByHistory(
+    @Param('nickname') nickname: string,
+    @Param('killerNickname') killerNickname: string,
+  ) {
+    try {
+      validateNickname(nickname);
+      validateNickname(killerNickname);
+      
+      const result = await this.deathNoteService.getKilledByHistory(nickname, killerNickname);
+      
+      if (result.totalDeaths === 0) {
+        return this.successResponse(result, `${killerNickname} has never killed ${nickname}`);
+      }
+      
+      return this.successResponse(result, `${killerNickname} has killed ${nickname} ${result.totalDeaths} time(s)`);
+    } catch (error) {
+      this.logger.error(`Error getting killed by history for ${nickname} <- ${killerNickname}:`, error);
+      throw new HttpException(
+        error.message || 'Failed to get killed by history',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * 获取死亡笔记数据
    * GET /api/v1/death-note/nickname/:nickname
    */

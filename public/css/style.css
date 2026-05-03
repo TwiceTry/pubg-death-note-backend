@@ -537,6 +537,141 @@ input[type="date"] {
   margin-bottom: 0;
 }
 
+.kill-item.death-item {
+  background: rgba(255, 71, 87, 0.05);
+  border-color: rgba(255, 71, 87, 0.15);
+}
+
+.kill-section-title,
+.death-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 10px 0 6px 0;
+  padding: 4px 8px;
+  border-radius: 2px;
+}
+
+.kill-section-title {
+  color: #2ed573;
+  background: rgba(46, 213, 115, 0.1);
+}
+
+.death-section-title {
+  color: #ff4757;
+  background: rgba(255, 71, 87, 0.1);
+}
+
+.killer-card {
+  background: rgba(255, 71, 87, 0.05);
+  border: 1px solid rgba(255, 71, 87, 0.2);
+  border-radius: 4px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.killer-card:last-child {
+  margin-bottom: 0;
+}
+
+.killer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 2px solid rgba(255, 71, 87, 0.4);
+}
+
+.killer-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #ff4757;
+}
+
+.killer-count {
+  font-size: 13px;
+  color: #ffa500;
+  font-weight: 700;
+}
+
+.killer-details {
+  padding: 10px;
+}
+
+.kill-time {
+  color: #aaa;
+  font-size: 12px;
+}
+
+.vs-stats {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  padding: 15px;
+  margin: 10px 0;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 165, 0, 0.2);
+  border-radius: 4px;
+}
+
+.vs-stat {
+  text-align: center;
+}
+
+.vs-stat-value {
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.vs-stat-value.kills {
+  color: #2ed573;
+}
+
+.vs-stat-value.deaths {
+  color: #ff4757;
+}
+
+.vs-stat-label {
+  font-size: 12px;
+  color: #888;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.vs-divider {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ffa500;
+  font-family: 'Black Ops One', cursive;
+}
+
+.vs-section {
+  margin-top: 15px;
+}
+
+.vs-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 2px;
+}
+
+.vs-section-title.kills {
+  color: #2ed573;
+  background: rgba(46, 213, 115, 0.1);
+}
+
+.vs-section-title.deaths {
+  color: #ff4757;
+  background: rgba(255, 71, 87, 0.1);
+}
+
 .kill-left {
   display: flex;
   align-items: center;

@@ -413,6 +413,72 @@ export class DeathNoteService {
       victimId: cachedVictim?.pubgId || 'unknown',
       victimNickname: cachedVictim?.nickname || victimNickname,
       totalKills: killEvents.length,
+      totalDeaths: 0,
+      killDetails,
+    };
+  }
+
+  /**
+   * 查询指定昵称的玩家是否击杀过当前用户，返回死亡详情
+   * 仅查询本地 killEvent 表，不调用 PUBG API，避免限速率问题
+   */
+  async getKilledByHistory(nickname: string, killerNickname: string): Promise<VictimKillHistoryResponse> {
+    const cachedVictim = await this.prisma.user.findFirst({
+      where: { nickname },
+    });
+    
+    const whereClause: any = {};
+    
+    if (cachedVictim) {
+      whereClause.victimId = cachedVictim.pubgId;
+    } else {
+      whereClause.victimName = nickname;
+    }
+    
+    const cachedKiller = await this.prisma.user.findFirst({
+      where: { nickname: killerNickname },
+    });
+    
+    if (cachedKiller) {
+      whereClause.killerId = cachedKiller.pubgId;
+    } else {
+      whereClause.killerName = killerNickname;
+    }
+    
+    const killEvents = await this.prisma.killEvent.findMany({
+      where: whereClause,
+      include: {
+        match: {
+          select: {
+            playedAt: true,
+            mapName: true,
+            gameMode: true,
+          }
+        }
+      },
+      orderBy: {
+        timestamp: 'desc'
+      }
+    });
+    
+    const killDetails = killEvents.map(event => ({
+      matchId: event.matchId,
+      matchTime: event.match?.playedAt,
+      mapName: event.match?.mapName,
+      gameMode: event.match?.gameMode,
+      weaponId: event.weaponId,
+      distance: event.distance,
+      isHeadshot: event.isHeadshot,
+      timestamp: event.timestamp,
+    }));
+    
+    return {
+      userId: cachedVictim?.pubgId || 'unknown',
+      nickname: cachedVictim?.nickname || nickname,
+      victimId: cachedKiller?.pubgId || 'unknown',
+      victimNickname: cachedKiller?.nickname || killerNickname,
+      totalKills: 0,
+      totalDeaths: killEvents.length,
       killDetails,
     };
   }
@@ -435,6 +501,7 @@ export class DeathNoteService {
           kills: 0,
           deaths: 0,
           killDetails: [],
+          deathDetails: [],
         });
       }
 
@@ -449,12 +516,25 @@ export class DeathNoteService {
           gameMode: event.match?.gameMode || null,
           weaponId: event.weaponId,
           victimName: event.victimName,
+          killerName: event.killerName,
           distance: event.distance,
           isHeadshot: event.isHeadshot,
           timestamp: event.timestamp,
         });
-      } else {
+      } else if (event.victimId === userId) {
         matchGroup.deaths++;
+        matchGroup.deathDetails.push({
+          matchId,
+          matchTime: event.match?.playedAt || null,
+          mapName: event.match?.mapName || null,
+          gameMode: event.match?.gameMode || null,
+          weaponId: event.weaponId,
+          victimName: event.victimName,
+          killerName: event.killerName,
+          distance: event.distance,
+          isHeadshot: event.isHeadshot,
+          timestamp: event.timestamp,
+        });
       }
     });
 
