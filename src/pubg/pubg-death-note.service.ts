@@ -58,10 +58,27 @@ export class PubgDeathNoteService {
         
         const estimatedEndTime = this.calculateEstimatedEndTime(newMatchesCount, generation.firstGenerationDuration);
         
-        await this.prisma.deathNoteGeneration.update({
-          where: { userId },
-          data: { estimatedEndTime },
-        });
+        try {
+          await this.prisma.deathNoteGeneration.update({
+            where: { userId },
+            data: { estimatedEndTime },
+          });
+        } catch (error) {
+          this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted, creating new one...`);
+          await this.prisma.deathNoteGeneration.create({
+            data: {
+              userId,
+              requestTime: new Date(),
+              isGenerated: false,
+            },
+          });
+          await this.processMatches(userId, false, taskId);
+          return {
+            userId,
+            isGenerated: false,
+            estimatedEndTime: null,
+          };
+        }
         
         await this.processMatches(userId, true, taskId);
         
@@ -132,8 +149,13 @@ export class PubgDeathNoteService {
 
       await this.processLocalMatches(userId, localMatchFiles, taskId);
 
-      await this.prisma.deathNoteGeneration.create({
-        data: {
+      await this.prisma.deathNoteGeneration.upsert({
+        where: { userId },
+        update: {
+          isGenerated: true,
+          actualEndTime: new Date(),
+        },
+        create: {
           userId,
           requestTime: new Date(),
           isGenerated: true,
@@ -283,19 +305,33 @@ export class PubgDeathNoteService {
 
     await this.processMatchList(userId, matchesToProcess, failedMatches, taskId);
 
+    if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+      this.logger.log(`Task ${taskId} was cancelled, stopping processMatches`);
+      return;
+    }
+
     if (failedMatches.length > 0) {
       this.logger.log(`Retrying ${failedMatches.length} failed matches...`);
       await this.retryFailedMatches(userId, failedMatches, taskId);
     }
 
-    await this.prisma.deathNoteGeneration.update({
-      where: { userId },
-      data: {
-        isGenerated: true,
-        actualEndTime: new Date(),
-        firstGenerationDuration: Date.now() - generation.requestTime.getTime(),
-      },
-    });
+    if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+      this.logger.log(`Task ${taskId} was cancelled, skipping final update`);
+      return;
+    }
+
+    try {
+      await this.prisma.deathNoteGeneration.update({
+        where: { userId },
+        data: {
+          isGenerated: true,
+          actualEndTime: new Date(),
+          firstGenerationDuration: Date.now() - generation.requestTime.getTime(),
+        },
+      });
+    } catch (error) {
+      this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted during processing, skipping final update`);
+    }
 
     await this.cleanupProgress(userId);
     await this.updateProgress(taskId, 100);
@@ -328,12 +364,16 @@ export class PubgDeathNoteService {
       await this.retryFailedMatches(userId, failedMatches, taskId);
     }
 
-    await this.prisma.deathNoteGeneration.update({
-      where: { userId },
-      data: {
-        lastIncrementalTime: new Date(),
-      },
-    });
+    try {
+      await this.prisma.deathNoteGeneration.update({
+        where: { userId },
+        data: {
+          lastIncrementalTime: new Date(),
+        },
+      });
+    } catch (error) {
+      this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted during incremental update, skipping final update`);
+    }
 
     await this.cleanupProgress(userId);
     await this.updateProgress(taskId, 100);
@@ -371,7 +411,8 @@ export class PubgDeathNoteService {
     });
 
     if (!generation) {
-      throw new Error(`No death note generation record found for user ${userId}`);
+      this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted during force generation, skipping final update`);
+      return { userId, isGenerated: false, estimatedEndTime: null };
     }
 
     await this.prisma.deathNoteGeneration.update({
@@ -455,6 +496,11 @@ export class PubgDeathNoteService {
     const processedIds = new Set<string>();
 
     for (const matchId of matchIds) {
+      if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+        this.logger.log(`Task ${taskId} was cancelled, stopping match processing`);
+        return;
+      }
+
       try {
         await this.processSingleMatch(userId, matchId);
         
@@ -495,6 +541,11 @@ export class PubgDeathNoteService {
     const totalMatches = matchIds.length;
 
     for (const matchId of matchIds) {
+      if (taskId && await this.taskService.isTaskCancelled(taskId)) {
+        this.logger.log(`Task ${taskId} was cancelled, stopping match processing`);
+        return;
+      }
+
       try {
         await this.processSingleMatch(userId, matchId);
         

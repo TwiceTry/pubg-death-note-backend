@@ -23,4 +23,6 @@ export const MATCH = {
 export const TASK = {
   STALE_TIMEOUT_MS: 5 * 60 * 1000,
   CLEANUP_INTERVAL_MS: 60 * 1000,
+  MAX_CONCURRENT_PER_USER: 1,
+  MAX_CONCURRENT_GLOBAL: 3,
 } as const;

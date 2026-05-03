@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PUBG Death Note - 管理后台</title>
+  <link rel="stylesheet" href="/admin/css/style.css?v=1">
+</head>
+
+<body>
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h2>管理后台</h2>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-tab="tasks">任务管理</a>
+      <a href="#" class="nav-item" data-tab="sync">数据同步</a>
+      <a href="#" class="nav-item" data-tab="deathnote">死亡笔记</a>
+    </nav>
+  </div>
+
+  <div class="main-content">
+    <div class="topbar">
+      <h1 id="pageTitle">任务管理</h1>
+    </div>
+
+    <div class="content-area">
+      <!-- 任务管理 -->
+      <div class="tab-panel active" id="panel-tasks">
+        <div class="card">
+          <div class="card-header">
+            <h3>任务列表</h3>
+            <button class="btn btn-primary" id="btnRefreshTasks" onclick="loadTaskList()">刷新</button>
+          </div>
+          <div class="card-body">
+            <div id="taskList" class="task-list">
+              <div class="empty-state">暂无任务记录</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 数据同步 -->
+      <div class="tab-panel" id="panel-sync">
+        <div class="card">
+          <div class="card-header">
+            <h3>同步本地比赛数据</h3>
+          </div>
+          <div class="card-body">
+            <p class="desc">从 game-data 目录读取本地比赛数据，同步到数据库（Match、UserMatch、KillEvent）</p>
+            <button class="btn btn-primary" id="btnSync" onclick="syncLocalMatches()">开始同步</button>
+            <div id="syncProgress" class="progress-container" style="display: none;">
+              <div class="progress-bar">
+                <div class="progress-fill" id="syncProgressFill"></div>
+              </div>
+              <span class="progress-text" id="syncProgressText">0%</span>
+            </div>
+            <div id="syncResult" class="result-box"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>重解析比赛遥测数据</h3>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label>Match ID</label>
+              <input type="text" id="reparseMatchId" placeholder="输入 Match ID">
+            </div>
+            <button class="btn btn-primary" id="btnReparseMatch" onclick="reparseMatch()">重解析单场</button>
+            <button class="btn btn-secondary" id="btnReparseAll" onclick="reparseAll()">重解析全部</button>
+            <div id="reparseResult" class="result-box"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 死亡笔记 -->
+      <div class="tab-panel" id="panel-deathnote">
+        <div class="card">
+          <div class="card-header">
+            <h3>生成/更新死亡笔记</h3>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label>玩家昵称</label>
+              <input type="text" id="deathnoteNickname" placeholder="输入 PUBG 昵称">
+            </div>
+            <button class="btn btn-primary" id="btnGenerate" onclick="generateDeathNote()">生成/更新</button>
+            <button class="btn btn-danger" id="btnForceGenerate" onclick="forceGenerateDeathNote()">强制重新生成</button>
+            <div id="deathnoteResult" class="result-box"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/js/app.js?v=1"></script>
+</body>
+
+</html>

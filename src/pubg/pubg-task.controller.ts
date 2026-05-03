@@ -4,6 +4,7 @@ import {
   Post,
   Get,
   Param,
+  Query,
   HttpException,
   HttpStatus,
   BadRequestException,
@@ -65,6 +66,10 @@ export class PubgTaskController {
       throw new HttpException('Invalid user ID', HttpStatus.BAD_REQUEST);
     }
 
+    if (await this.taskService.hasRunningTask(userId)) {
+      throw new HttpException('User already has a running task', HttpStatus.CONFLICT);
+    }
+
     const taskId = await this.taskService.createAndExecuteTask(
       'reparse_user',
       async () => {
@@ -73,6 +78,7 @@ export class PubgTaskController {
           async (current, total, percentage) => {
             await this.taskService.updateTaskStatus(taskId, 'running', percentage);
           },
+          async () => this.taskService.isTaskCancelled(taskId),
         );
         return { ...result, userId };
       },
@@ -116,6 +122,16 @@ export class PubgTaskController {
     }
 
     return this.successResponse({ task });
+  }
+
+  /**
+   * 获取所有任务列表（分页）
+   * GET /api/v1/pubg/tasks/list?page=1&limit=20
+   */
+  @Get('list')
+  async getAllTasks(@Query('page') page?: string, @Query('limit') limit?: string) {
+    const result = await this.taskService.getAllTasks(Number(page) || 1, Number(limit) || 20);
+    return this.successResponse(result);
   }
 
   /**
@@ -179,11 +195,20 @@ export class PubgTaskController {
 
     const userInfo = await this.pubgUserService.getUserByNickname(nickname);
 
+    if (await this.taskService.hasRunningTask(userInfo.id)) {
+      throw new HttpException('User already has a running task', HttpStatus.CONFLICT);
+    }
+
     const taskId = await this.taskService.createAndExecuteTask(
       'death_note_generate',
       async (taskId: string) => {
-        const generation = await this.pubgDeathNoteService.getDeathNoteGenerationStatus(userInfo.id);
-        const isIncremental = generation.isGenerated;
+        let isIncremental = false;
+        try {
+          const generation = await this.pubgDeathNoteService.getDeathNoteGenerationStatus(userInfo.id);
+          isIncremental = generation.isGenerated;
+        } catch {
+          isIncremental = false;
+        }
 
         const result = await this.pubgDeathNoteService.requestDeathNoteGenerationByUserId(userInfo.id, taskId);
         
@@ -204,6 +229,7 @@ export class PubgTaskController {
 
   /**
    * 创建死亡笔记强制生成任务
+   * 如果用户有正在运行的任务，先终止再开始
    * POST /api/v1/pubg/tasks/death-note/force-generate/:nickname
    */
   @Post('death-note/force-generate/:nickname')
@@ -213,6 +239,11 @@ export class PubgTaskController {
     }
 
     const userInfo = await this.pubgUserService.getUserByNickname(nickname);
+
+    if (await this.taskService.hasRunningTask(userInfo.id)) {
+      const cancelled = await this.taskService.cancelRunningTasks(userInfo.id);
+      this.logger.log(`Cancelled ${cancelled} running task(s) for user ${userInfo.id} before force generation`);
+    }
 
     const taskId = await this.taskService.createAndExecuteTask(
       'death_note_force_generate',
@@ -246,6 +277,7 @@ export class PubgTaskController {
           async (current, total, percentage) => {
             await this.taskService.updateTaskStatus(taskId, 'running', percentage);
           },
+          async () => this.taskService.isTaskCancelled(taskId),
         );
         return result;
       },

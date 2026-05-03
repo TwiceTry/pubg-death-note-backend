@@ -525,7 +525,20 @@ export class DeathNoteService {
     });
 
     if (!cachedUser) {
-      throw new Error(`User "${nickname}" not found in local cache`);
+      return {
+        userId: '',
+        nickname,
+        totalMatches: 0,
+        totalKills: 0,
+        totalDeaths: 0,
+        totalDays: 0,
+        startDate: null,
+        endDate: null,
+        page,
+        pageSize,
+        totalPages: 0,
+        days: [],
+      };
     }
 
     const userId = cachedUser.pubgId;

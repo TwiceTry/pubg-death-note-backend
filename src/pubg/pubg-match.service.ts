@@ -437,6 +437,7 @@ export class PubgMatchService {
   async reparseUserTelemetryWithProgress(
     userId: string,
     progressCallback: (current: number, total: number, percentage: number) => Promise<void>,
+    isCancelled?: () => Promise<boolean>,
   ): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; userId: string }> {
     try {
       const matchIds = await this.getUserMatchHistory(userId);
@@ -444,6 +445,10 @@ export class PubgMatchService {
       let processedMatches = 0;
 
       for (const matchId of matchIds) {
+        if (isCancelled && await isCancelled()) {
+          return { success: false, message: 'Task was cancelled', totalMatches, processedMatches, userId };
+        }
+
         try {
           await this.reparseMatchTelemetry(matchId);
           processedMatches++;
@@ -487,6 +492,7 @@ export class PubgMatchService {
    */
   async syncLocalMatches(
     progressCallback: (current: number, total: number, percentage: number) => Promise<void>,
+    isCancelled?: () => Promise<boolean>,
   ): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; newMatches: number; updatedMatches: number; newUserMatches: number; newKillEvents: number }> {
     try {
       const localMatchIds = this.getLocalMatchFiles();
@@ -509,6 +515,10 @@ export class PubgMatchService {
       let newKillEvents = 0;
 
       for (const matchId of localMatchIds) {
+        if (isCancelled && await isCancelled()) {
+          return { success: false, message: 'Task was cancelled', totalMatches, processedMatches, newMatches, updatedMatches, newUserMatches, newKillEvents };
+        }
+
         try {
           const matchData = await this.getMatchOriginalData(matchId);
           const existingMatch = await this.prisma.match.findUnique({ where: { id: matchId } });
