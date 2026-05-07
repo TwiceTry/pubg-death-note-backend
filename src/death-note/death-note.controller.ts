@@ -155,15 +155,26 @@ export class DeathNoteController {
   /**
    * 分页获取死亡笔记数据（按天分组）
    * GET /api/v1/death-note/nickname/:nickname/matches?page=1&pageSize=10
+   * GET /api/v1/death-note/nickname/:nickname/matches?date=2024-01-01
    */
   @Get('nickname/:nickname/matches')
   async getDeathNoteMatches(
     @Param('nickname') nickname: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('date') date?: string,
   ) {
     try {
       validateNickname(nickname);
+      
+      if (date) {
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(date)) {
+          throw new HttpException('Invalid date format, use YYYY-MM-DD', HttpStatus.BAD_REQUEST);
+        }
+        const result = await this.deathNoteService.getDeathNoteByDate(nickname, date);
+        return this.successResponse(result);
+      }
       
       const { page: pageNum, pageSize: pageSizeNum } = validatePaginationParams(page, pageSize);
       

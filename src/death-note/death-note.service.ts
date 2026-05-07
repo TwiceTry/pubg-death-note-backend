@@ -699,6 +699,112 @@ export class DeathNoteService {
   }
 
   /**
+   * 按日期查询死亡笔记数据
+   */
+  async getDeathNoteByDate(
+    nickname: string,
+    date: string,
+  ): Promise<DeathNotePaginatedResponse> {
+    const cacheKey = `deathnote:${nickname}:date:${date}`;
+    const cached = await cache.get<DeathNotePaginatedResponse>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const cachedUser = await this.prisma.user.findFirst({
+      where: { nickname },
+    });
+
+    if (!cachedUser) {
+      return {
+        userId: '',
+        nickname,
+        totalMatches: 0,
+        totalKills: 0,
+        totalDeaths: 0,
+        totalDays: 0,
+        startDate: null,
+        endDate: null,
+        page: 1,
+        pageSize: 1,
+        totalPages: 0,
+        days: [],
+      };
+    }
+
+    const userId = cachedUser.pubgId;
+
+    const [killEvents, totalStats] = await Promise.all([
+      this.prisma.killEvent.findMany({
+        where: {
+          OR: [
+            { killerId: userId },
+            { victimId: userId },
+          ],
+        },
+        include: {
+          match: {
+            select: {
+              playedAt: true,
+              mapName: true,
+              gameMode: true,
+            },
+          },
+        },
+        orderBy: { timestamp: 'desc' },
+      }),
+      this.prisma.killEvent.groupBy({
+        by: ['killerId', 'victimId'],
+        where: {
+          OR: [
+            { killerId: userId },
+            { victimId: userId },
+          ],
+        },
+        _count: true,
+      }),
+    ]);
+
+    const totalKills = totalStats.filter(s => s.killerId === userId).reduce((sum, s) => sum + s._count, 0);
+    const totalDeaths = totalStats.filter(s => s.victimId === userId).reduce((sum, s) => sum + s._count, 0);
+
+    const matchMap = this.groupEventsByMatch(killEvents, userId);
+
+    const allMatches = Array.from(matchMap.values())
+      .filter(match => match.kills > 0 || match.deaths > 0)
+      .sort((a, b) => {
+        const timeA = a.matchTime?.getTime() || 0;
+        const timeB = b.matchTime?.getTime() || 0;
+        return timeB - timeA;
+      });
+
+    const allDays = this.groupMatchesByDay(allMatches);
+
+    const dayData = allDays.find(d => d.date === date);
+
+    const { startDate, endDate } = this.calculateDateRange(allDays);
+
+    const result: DeathNotePaginatedResponse = {
+      userId,
+      nickname: cachedUser.nickname,
+      totalMatches: allMatches.length,
+      totalKills,
+      totalDeaths,
+      totalDays: allDays.length,
+      startDate,
+      endDate,
+      page: 1,
+      pageSize: 1,
+      totalPages: allDays.length,
+      days: dayData ? [dayData] : [],
+    };
+
+    await cache.set(cacheKey, result, this.CACHE_TTL);
+
+    return result;
+  }
+
+  /**
    * 清除用户死亡笔记缓存
    */
   async invalidateCache(nickname: string): Promise<void> {

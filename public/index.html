@@ -33,16 +33,18 @@
         <button class="btn" id="btn-deathnote" onclick="queryDeathNote()">查询</button>
       </div>
 
-      <button class="toggle-calendar-btn" id="toggleCalendarBtn" onclick="toggleCalendar()" style="display: none;">
+      <!-- <button class="toggle-calendar-btn" id="toggleCalendarBtn" onclick="toggleCalendar()" style="display: none;">
         <span class="calendar-icon">📅</span>
         <span>选择日期</span>
-      </button>
+      </button> -->
 
       <div class="calendar-section" id="calendarSection">
         <div class="calendar-header">
+          <button class="calendar-nav-btn" onclick="calendarPrevCycle()">◀◀</button>
           <button class="calendar-nav-btn" onclick="calendarPrev()">◀</button>
           <span class="calendar-title" id="calendarTitle" onclick="toggleCalendarExpand()"></span>
           <button class="calendar-nav-btn" onclick="calendarNext()">▶</button>
+          <button class="calendar-nav-btn" onclick="calendarNextCycle()">▶▶</button>
         </div>
         <div class="calendar-grid" id="calendarGrid"></div>
       </div>

@@ -6,6 +6,8 @@ var availableDates = [];
 var allDaysData = [];
 var pageNickname = '';
 var calendarExpanded = false;
+var currentViewDate = null;
+var allStatsData = null;
 
 var mapNames = {};
 var gameModes = {};
@@ -191,27 +193,120 @@ function formatWeekRange(start, end) {
 }
 
 function calendarPrev() {
-  if (calendarExpanded) {
-    currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
-  } else {
-    currentCalendarDate.setDate(currentCalendarDate.getDate() - 7);
-  }
+  if (!currentViewDate) return;
+  var d = new Date(currentViewDate);
+  d.setDate(d.getDate() - 1);
+  currentViewDate = d;
+  currentCalendarDate = new Date(d);
   renderCalendar();
+  loadDateData(d);
 }
 
 function calendarNext() {
-  if (calendarExpanded) {
-    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
-  } else {
-    currentCalendarDate.setDate(currentCalendarDate.getDate() + 7);
-  }
+  if (!currentViewDate) return;
+  var d = new Date(currentViewDate);
+  d.setDate(d.getDate() + 1);
+  currentViewDate = d;
+  currentCalendarDate = new Date(d);
   renderCalendar();
+  loadDateData(d);
+}
+
+function calendarPrevCycle() {
+  if (!currentViewDate) return;
+  var d = new Date(currentViewDate);
+  if (calendarExpanded) {
+    d.setMonth(d.getMonth() - 1);
+  } else {
+    d.setDate(d.getDate() - 7);
+  }
+  currentViewDate = d;
+  currentCalendarDate = new Date(d);
+  renderCalendar();
+  loadDateData(d);
+}
+
+function calendarNextCycle() {
+  if (!currentViewDate) return;
+  var d = new Date(currentViewDate);
+  if (calendarExpanded) {
+    d.setMonth(d.getMonth() + 1);
+  } else {
+    d.setDate(d.getDate() + 7);
+  }
+  currentViewDate = d;
+  currentCalendarDate = new Date(d);
+  renderCalendar();
+  loadDateData(d);
+}
+
+function loadDateData(date) {
+  if (!currentDeathNoteNickname) return;
+  var dateStr = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+  selectedDate = dateStr;
+  renderCalendar();
+  fetchDateData(dateStr);
+}
+
+async function fetchDateData(dateStr) {
+  try {
+    var url = getApiBase() + '/death-note/nickname/' + encodeURIComponent(currentDeathNoteNickname) + '/matches?date=' + dateStr;
+    var response = await fetch(url);
+    var data = await response.json();
+
+    if (!response.ok || !data.success) {
+      return;
+    }
+
+    if (data.days.length === 0) {
+      showSuccess('result-deathnote',
+        '<div class="result-title">死亡笔记 - ' + dateStr + '</div>' +
+        '<div class="empty-state">该日期没有击杀记录</div>'
+      );
+      return;
+    }
+
+    renderDays(data.days, dateStr);
+
+    var resultEl = document.getElementById('result-deathnote');
+    var statsHtml = buildStatsHtml(data);
+    resultEl.innerHTML = statsHtml + resultEl.innerHTML;
+  } catch (error) {
+    console.error('Failed to load date data:', error);
+  }
+}
+
+function buildStatsHtml(data) {
+  return '<div class="stat-row">' +
+    '<span class="stat-label">玩家</span>' +
+    '<span class="stat-value">' + escapeHtml(data.nickname) + '</span>' +
+    '</div>' +
+    (data.startDate && data.endDate ?
+      '<div class="stat-row">' +
+      '<span class="stat-label">数据范围</span>' +
+      '<span class="stat-value">' + data.startDate + ' ~ ' + data.endDate + '</span>' +
+      '</div>' : '') +
+    '<div class="stat-row">' +
+    '<span class="stat-label">总击杀</span>' +
+    '<span class="stat-value" style="color:#2ed573">' + data.totalKills + '</span>' +
+    '</div>' +
+    '<div class="stat-row">' +
+    '<span class="stat-label">总死亡</span>' +
+    '<span class="stat-value" style="color:#ff4757">' + data.totalDeaths + '</span>' +
+    '</div>' +
+    '<div class="stat-row">' +
+    '<span class="stat-label">比赛场次</span>' +
+    '<span class="stat-value">' + data.totalMatches + '</span>' +
+    '</div>';
 }
 
 function selectDate(dateStr) {
   selectedDate = dateStr;
+  var d = new Date(dateStr + 'T00:00:00');
+  currentViewDate = d;
+  currentCalendarDate = new Date(d);
   renderCalendar();
-  filterByDate(dateStr);
+  fetchDateData(dateStr);
 }
 
 function filterByDate(dateStr) {
@@ -324,7 +419,14 @@ function renderDays(days, title) {
 function showAllDays() {
   selectedDate = null;
   renderCalendar();
-  renderDays(allDaysData, '');
+  if (allDaysData.length > 0) {
+    renderDays(allDaysData, '');
+    var resultEl = document.getElementById('result-deathnote');
+    if (allStatsData) {
+      var statsHtml = buildStatsHtml(allStatsData);
+      resultEl.innerHTML = statsHtml + resultEl.innerHTML;
+    }
+  }
 }
 
 function toggleMatch(matchId) {
@@ -542,31 +644,33 @@ async function queryDeathNote(page) {
 
     allDaysData = data.days;
     availableDates = data.days.map(function (day) { return day.date; });
+    allStatsData = data;
 
-    currentCalendarDate = new Date();
-    renderCalendar();
+    var today = new Date();
+    var todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    currentViewDate = new Date(todayStr + 'T00:00:00');
+    currentCalendarDate = new Date(currentViewDate);
 
-    document.getElementById('toggleCalendarBtn').style.display = 'flex';
+    if (availableDates.indexOf(todayStr) !== -1) {
+      selectedDate = todayStr;
+      renderCalendar();
+      fetchDateData(todayStr);
+    } else {
+      selectedDate = null;
+      renderCalendar();
+      renderDays(data.days, '');
+    }
+
+    // document.getElementById('toggleCalendarBtn').style.display = 'flex';
 
     var shareLink = window.location.origin + '/n/' + encodeURIComponent(nickname);
     document.getElementById('shareLinkUrl').textContent = shareLink;
     document.getElementById('shareLink').style.display = 'block';
 
-    var paginationHtml = '';
-    if (data.totalPages > 1) {
-      paginationHtml = '<div class="pagination">' +
-        '<button class="page-btn" onclick="loadDeathNotePage(1)" ' + (data.page === 1 ? 'disabled' : '') + '>首页</button>' +
-        '<button class="page-btn" onclick="loadDeathNotePage(' + (data.page - 1) + ')" ' + (data.page === 1 ? 'disabled' : '') + '>上一页</button>' +
-        '<span class="page-info">第 ' + data.page + ' / ' + data.totalPages + ' 页</span>' +
-        '<button class="page-btn" onclick="loadDeathNotePage(' + (data.page + 1) + ')" ' + (data.page === data.totalPages ? 'disabled' : '') + '>下一页</button>' +
-        '<button class="page-btn" onclick="loadDeathNotePage(' + data.totalPages + ')" ' + (data.page === data.totalPages ? 'disabled' : '') + '>末页</button>' +
-        '</div>';
-    }
-
     renderDays(data.days, '');
 
     var resultEl = document.getElementById('result-deathnote');
-    resultEl.innerHTML = statsHtml + resultEl.innerHTML + paginationHtml;
+    resultEl.innerHTML = statsHtml + resultEl.innerHTML;
   } catch (error) {
     showError('result-deathnote', error.message);
   } finally {
