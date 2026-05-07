@@ -48,7 +48,7 @@ model KillEvent {
   @@index([killerId, timestamp]) // 优化按时间排序的查询
   @@index([victimId, timestamp]) // 优化按时间排序的查询
   
-  @@unique([matchId, victimId, timestamp]) // 唯一约束：同一比赛中同一时刻同一受害者只记录一次
+  @@unique([matchId, victimId, timestamp], name: "matchId_victimId_timestamp") // 唯一约束：同一比赛中同一时刻同一受害者只记录一次
 }
 
 // 用户表：存储用户信息，处理昵称变化

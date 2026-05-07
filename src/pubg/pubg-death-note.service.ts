@@ -48,13 +48,7 @@ export class PubgDeathNoteService {
       if (generation?.isGenerated) {
         this.logger.log(`User ${userId} already has generated death note, performing incremental update...`);
         
-        const matchIds = await this.matchService.getUserMatchHistory(userId);
-        const existingMatches = await this.prisma.userMatch.findMany({
-          where: { userId },
-          select: { matchId: true },
-        });
-        const existingMatchIds = new Set(existingMatches.map(m => m.matchId));
-        const newMatchesCount = matchIds.filter(id => !existingMatchIds.has(id)).length;
+        const { totalMatches, processedMatches, newMatchesCount } = await this.processMatches(userId, true, taskId);
         
         const estimatedEndTime = this.calculateEstimatedEndTime(newMatchesCount, generation.firstGenerationDuration);
         
@@ -72,17 +66,15 @@ export class PubgDeathNoteService {
               isGenerated: false,
             },
           });
-          const { totalMatches, processedMatches } = await this.processMatches(userId, false, taskId);
+          const result = await this.processMatches(userId, false, taskId);
           return {
             userId,
             isGenerated: false,
             estimatedEndTime: null,
-            totalMatches,
-            processedMatches,
+            totalMatches: result.totalMatches,
+            processedMatches: result.processedMatches,
           };
         }
-        
-        const { totalMatches, processedMatches } = await this.processMatches(userId, true, taskId);
         
         const updatedGeneration = await this.prisma.deathNoteGeneration.findUnique({
           where: { userId },
@@ -293,20 +285,21 @@ export class PubgDeathNoteService {
   /**
    * 处理用户的所有比赛（增量或全量）
    */
-  private async processMatches(userId: string, isIncremental: boolean, taskId?: string): Promise<{ totalMatches: number; processedMatches: number }> {
+  private async processMatches(userId: string, isIncremental: boolean, taskId?: string): Promise<{ totalMatches: number; processedMatches: number; newMatchesCount: number }> {
     const generation = await this.prisma.deathNoteGeneration.findUnique({
       where: { userId },
     });
 
     if (!generation) {
       this.logger.error(`No death note generation record found for user ${userId}`);
-      return { totalMatches: 0, processedMatches: 0 };
+      return { totalMatches: 0, processedMatches: 0, newMatchesCount: 0 };
     }
 
     const matchIds = await this.matchService.getUserMatchHistory(userId);
     this.logger.log(`Found ${matchIds.length} matches for user ${userId}`);
 
     let matchesToProcess = matchIds;
+    let newMatchesCount = 0;
     const failedMatches: FailedMatch[] = [];
 
     if (isIncremental) {
@@ -316,6 +309,7 @@ export class PubgDeathNoteService {
       });
       const existingMatchIds = new Set(existingMatches.map(m => m.matchId));
       matchesToProcess = matchIds.filter(id => !existingMatchIds.has(id));
+      newMatchesCount = matchesToProcess.length;
       this.logger.log(`Incremental update: ${matchesToProcess.length} new matches to process (out of ${matchIds.length} total)`);
     }
 
@@ -323,7 +317,7 @@ export class PubgDeathNoteService {
 
     if (taskId && await this.taskService.isTaskCancelled(taskId)) {
       this.logger.log(`Task ${taskId} was cancelled, stopping processMatches`);
-      return { totalMatches: matchesToProcess.length, processedMatches: 0 };
+      return { totalMatches: matchesToProcess.length, processedMatches: 0, newMatchesCount };
     }
 
     if (failedMatches.length > 0) {
@@ -333,7 +327,7 @@ export class PubgDeathNoteService {
 
     if (taskId && await this.taskService.isTaskCancelled(taskId)) {
       this.logger.log(`Task ${taskId} was cancelled, skipping final update`);
-      return { totalMatches: matchesToProcess.length, processedMatches: matchesToProcess.length - failedMatches.length };
+      return { totalMatches: matchesToProcess.length, processedMatches: matchesToProcess.length - failedMatches.length, newMatchesCount };
     }
 
     try {
@@ -353,34 +347,14 @@ export class PubgDeathNoteService {
     await this.updateProgress(taskId, 100);
     const processedCount = matchesToProcess.length - failedMatches.length;
     this.logger.log(`Death note generation completed for user ${userId}. Processed ${processedCount} matches.`);
-    return { totalMatches: matchesToProcess.length, processedMatches: processedCount };
+    return { totalMatches: matchesToProcess.length, processedMatches: processedCount, newMatchesCount };
   }
 
   /**
    * 增量更新（用户手动或定时任务）
    */
   async incrementalUpdate(userId: string, taskId?: string): Promise<DeathNoteGenerationResult> {
-    const matchIds = await this.matchService.getUserMatchHistory(userId);
-    const existingMatches = await this.prisma.userMatch.findMany({
-      where: { userId },
-      select: { matchId: true },
-    });
-    const existingMatchIds = new Set(existingMatches.map(m => m.matchId));
-    const newMatches = matchIds.filter(id => !existingMatchIds.has(id));
-
-    if (newMatches.length === 0) {
-      this.logger.log(`No new matches for user ${userId}`);
-      return { userId, isGenerated: true, estimatedEndTime: null, totalMatches: 0, processedMatches: 0 };
-    }
-
-    this.logger.log(`Incremental update for user ${userId}: ${newMatches.length} new matches`);
-
-    const failedMatches: FailedMatch[] = [];
-    await this.processMatchList(userId, newMatches, failedMatches, taskId);
-
-    if (failedMatches.length > 0) {
-      await this.retryFailedMatches(userId, failedMatches, taskId);
-    }
+    const { totalMatches, processedMatches } = await this.processMatches(userId, true, taskId);
 
     try {
       await this.prisma.deathNoteGeneration.update({
@@ -393,11 +367,7 @@ export class PubgDeathNoteService {
       this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted during incremental update, skipping final update`);
     }
 
-    await this.cleanupProgress(userId);
-    await this.updateProgress(taskId, 100);
-
-    const processedCount = newMatches.length - failedMatches.length;
-    return { userId, isGenerated: true, estimatedEndTime: null, totalMatches: newMatches.length, processedMatches: processedCount };
+    return { userId, isGenerated: true, estimatedEndTime: null, totalMatches, processedMatches };
   }
 
   /**
@@ -419,7 +389,7 @@ export class PubgDeathNoteService {
     this.logger.log(`Resuming user ${userId}: ${remainingMatches.length} matches remaining (out of ${allMatches.length} total)`);
 
     const failedMatches: FailedMatch[] = JSON.parse(progress.failedMatches);
-    await this.processMatchListWithProgress(userId, remainingMatches, failedMatches, taskId, processedIds);
+    await this.processMatchList(userId, remainingMatches, failedMatches, taskId, processedIds, progress.processedCount);
 
     if (failedMatches.length > 0) {
       await this.retryFailedMatches(userId, failedMatches, taskId);
@@ -512,55 +482,12 @@ export class PubgDeathNoteService {
     matchIds: string[],
     failedMatches: FailedMatch[],
     taskId?: string,
+    initialProcessedIds?: Set<string>,
+    initialProcessedCount?: number,
   ): Promise<void> {
-    let processedCount = 0;
+    let processedCount = initialProcessedCount || 0;
     const totalMatches = matchIds.length;
-    const processedIds = new Set<string>();
-
-    for (const matchId of matchIds) {
-      if (taskId && await this.taskService.isTaskCancelled(taskId)) {
-        this.logger.log(`Task ${taskId} was cancelled, stopping match processing`);
-        return;
-      }
-
-      try {
-        await this.processSingleMatch(userId, matchId);
-        
-        processedCount++;
-        processedIds.add(matchId);
-        
-        const progress = totalMatches > 0 ? Math.round((processedCount / totalMatches) * 100) : 100;
-        await this.updateProgress(taskId, progress);
-        
-        if (taskId && processedCount % DEATH_NOTE.HEARTBEAT_INTERVAL === 0) {
-          await this.saveProgress(userId, taskId, processedIds, processedCount, failedMatches, totalMatches);
-        }
-        
-        this.logger.log(`Successfully processed match ${matchId} for user ${userId} (${processedCount}/${totalMatches}) - ${progress}%`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Error processing match ${matchId}:`, error);
-        failedMatches.push({ matchId, error: errorMessage, retryCount: 0 });
-      }
-    }
-  }
-
-  /**
-   * 处理比赛列表（带进度跟踪，用于断点续传）
-   */
-  private async processMatchListWithProgress(
-    userId: string,
-    matchIds: string[],
-    failedMatches: FailedMatch[],
-    taskId: string | undefined,
-    processedIds: Set<string>,
-  ): Promise<void> {
-    const progress = await this.prisma.deathNoteProgress.findUnique({
-      where: { userId },
-    });
-
-    let processedCount = progress?.processedCount || 0;
-    const totalMatches = matchIds.length;
+    const processedIds = initialProcessedIds || new Set<string>();
 
     for (const matchId of matchIds) {
       if (taskId && await this.taskService.isTaskCancelled(taskId)) {
@@ -595,10 +522,11 @@ export class PubgDeathNoteService {
    */
   private async processSingleMatch(userId: string, matchId: string): Promise<void> {
     let match = await this.prisma.match.findUnique({ where: { id: matchId } });
+    let matchData: any = null;
 
     if (!match) {
       this.logger.log(`Match ${matchId} not found, fetching from API...`);
-      const matchData = await this.matchService.getMatchOriginalData(matchId);
+      matchData = await this.matchService.getMatchOriginalData(matchId);
       match = await this.matchService.saveMatch(matchId, matchData);
     }
 
@@ -610,7 +538,10 @@ export class PubgDeathNoteService {
       create: { userId, matchId },
     });
 
-    const matchData = await this.matchService.getMatchOriginalData(matchId);
+    if (!matchData) {
+      matchData = await this.matchService.getMatchOriginalData(matchId);
+    }
+
     if (matchData.telemetryEvents?.length > 0) {
       await this.matchService.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
     }
@@ -649,14 +580,17 @@ export class PubgDeathNoteService {
       const matchId = matchIds[i];
       try {
         let match = await this.prisma.match.findUnique({ where: { id: matchId } });
+        let matchData: any = null;
 
         if (!match) {
-          const matchData = await this.matchService.getMatchOriginalData(matchId);
+          matchData = await this.matchService.getMatchOriginalData(matchId);
           match = await this.matchService.saveMatch(matchId, matchData);
-          (matchData as any).telemetryEvents = null;
         }
 
-        const matchData = await this.matchService.getMatchOriginalData(matchId);
+        if (!matchData) {
+          matchData = await this.matchService.getMatchOriginalData(matchId);
+        }
+
         const participants = this.extractParticipants(matchData);
         
         if (participants.includes(userId)) {
