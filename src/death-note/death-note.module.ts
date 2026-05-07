@@ -4,12 +4,14 @@ import { DeathNoteService } from './death-note.service';
 import { PubgModule } from '../pubg/pubg.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { TaskModule } from '../task/task.module';
+import { GameDataI18nModule } from '../game-data-i18n/game-data-i18n.module';
 
 @Module({
   imports: [
     PrismaModule,
     PubgModule,
     TaskModule,
+    GameDataI18nModule,
   ],
   controllers: [DeathNoteController],
   providers: [DeathNoteService],

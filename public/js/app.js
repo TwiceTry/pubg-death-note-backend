@@ -41,10 +41,6 @@ function translateMode(modeName) {
 function formatWeapon(weaponId) {
   if (!weaponId) return '未知';
   if (weaponNames[weaponId]) return weaponNames[weaponId];
-  if (weaponId.includes('PlayerMale_A') || weaponId.includes('PlayerFemale_A')) return '拳头';
-  if (weaponId.startsWith('Weap')) {
-    return weaponId.replace('Weap', '').replace('_C', '').replace(/_/g, ' ');
-  }
   return weaponId;
 }
 

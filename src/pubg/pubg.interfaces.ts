@@ -220,11 +220,13 @@ export interface TelemetryKillEventV2 {
     damageCauserName: string;
     distance: number;
     damageReason: string;
+    damageTypeCategory?: string;
   };
   killerDamageInfo?: {
     damageCauserName: string;
     distance: number;
     damageReason: string;
+    damageTypeCategory?: string;
   };
   weapon?: {
     weaponId: string;

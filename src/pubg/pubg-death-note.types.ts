@@ -4,6 +4,8 @@ export interface DeathNoteGenerationResult {
   userId: string;
   isGenerated: boolean;
   estimatedEndTime?: Date | null;
+  totalMatches?: number;
+  processedMatches?: number;
 }
 
 export interface DeathNoteStatusResult {

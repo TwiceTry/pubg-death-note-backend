@@ -269,9 +269,9 @@ export class PubgMatchService {
   /**
    * 解析单个击杀事件
    */
-  private parseKillEvent(event: TelemetryKillEventV2): { killerId: string; killerName: string; victimId: string; victimName: string; weaponId: string; distance: number; isHeadshot: boolean; timestamp: Date } | null {
-    let killerId: string;
-    let killerName: string;
+  private parseKillEvent(event: TelemetryKillEventV2): { killerId: string | null; killerName: string | null; victimId: string; victimName: string; weaponId: string; distance: number; isHeadshot: boolean; timestamp: Date } | null {
+    let killerId: string | null;
+    let killerName: string | null;
     let victimId: string;
     let victimName: string;
     let weaponId: string;
@@ -280,17 +280,17 @@ export class PubgMatchService {
     let timestamp: Date;
 
     if (event._T === 'LogPlayerKillV2') {
-      killerId = event.killer?.accountId || '';
-      killerName = event.killer?.name || '';
+      killerId = event.killer?.accountId || null;
+      killerName = event.killer?.name || null;
       victimId = event.victim?.accountId || '';
       victimName = event.victim?.name || '';
-      weaponId = event.finishDamageInfo?.damageCauserName || event.killerDamageInfo?.damageCauserName || 'Unknown';
-      distance = event.finishDamageInfo?.distance || event.killerDamageInfo?.distance || 0;
-      isHeadshot = event.finishDamageInfo?.damageReason === 'HeadShot' || event.killerDamageInfo?.damageReason === 'HeadShot';
+      weaponId = event.killerDamageInfo?.damageCauserName || event.finishDamageInfo?.damageCauserName || 'Unknown';
+      distance = event.killerDamageInfo?.distance || event.finishDamageInfo?.distance || 0;
+      isHeadshot = event.killerDamageInfo?.damageReason === 'HeadShot' || event.finishDamageInfo?.damageReason === 'HeadShot';
       timestamp = new Date(event._D);
     } else {
-      killerId = event.character?.accountId || '';
-      killerName = event.character?.name || '';
+      killerId = event.character?.accountId || null;
+      killerName = event.character?.name || null;
       victimId = event.victim?.accountId || '';
       victimName = event.victim?.name || '';
       weaponId = event.weapon?.weaponId || event.weapon?.weaponClass || 'Unknown';
@@ -299,8 +299,12 @@ export class PubgMatchService {
       timestamp = new Date(event.timestamp || event._D);
     }
 
-    if (!killerId || !victimId) {
+    if (!victimId) {
       return null;
+    }
+
+    if (!killerId) {
+      weaponId = event.finishDamageInfo?.damageTypeCategory || event.killerDamageInfo?.damageTypeCategory || weaponId;
     }
 
     return { killerId, killerName, victimId, victimName, weaponId, distance, isHeadshot, timestamp };
@@ -316,6 +320,8 @@ export class PubgMatchService {
       const killEvents = telemetryEvents.filter(event =>
         event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill'
       ) as TelemetryKillEventV2[];
+
+      (telemetryEvents as any).length = 0;
 
       if (killEvents.length === 0) {
         this.logger.log(`No kill events found in telemetry for match ${matchId}`);
@@ -337,14 +343,14 @@ export class PubgMatchService {
         for (const parsed of parsedEvents) {
           await tx.killEvent.upsert({
             where: {
-              matchId_killerId_victimId_timestamp: {
+              matchId_victimId_timestamp: {
                 matchId,
-                killerId: parsed.killerId,
                 victimId: parsed.victimId,
                 timestamp: parsed.timestamp,
               },
             },
             update: {
+              killerId: parsed.killerId,
               killerName: parsed.killerName,
               victimName: parsed.victimName,
               weaponId: parsed.weaponId,
@@ -555,12 +561,16 @@ export class PubgMatchService {
             await this.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
           }
 
-          processedMatches++;
-          await progressCallback(processedMatches, totalMatches, Math.round((processedMatches / totalMatches) * 100));
+          (matchData as any).telemetryEvents = null;
         } catch (error) {
           this.logger.warn(`Failed to sync match ${matchId}: ${error.message}`);
+        } finally {
           processedMatches++;
           await progressCallback(processedMatches, totalMatches, Math.round((processedMatches / totalMatches) * 100));
+
+          if (processedMatches % 10 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
         }
       }
 

@@ -72,15 +72,17 @@ export class PubgDeathNoteService {
               isGenerated: false,
             },
           });
-          await this.processMatches(userId, false, taskId);
+          const { totalMatches, processedMatches } = await this.processMatches(userId, false, taskId);
           return {
             userId,
             isGenerated: false,
             estimatedEndTime: null,
+            totalMatches,
+            processedMatches,
           };
         }
         
-        await this.processMatches(userId, true, taskId);
+        const { totalMatches, processedMatches } = await this.processMatches(userId, true, taskId);
         
         const updatedGeneration = await this.prisma.deathNoteGeneration.findUnique({
           where: { userId },
@@ -90,6 +92,8 @@ export class PubgDeathNoteService {
           userId,
           isGenerated: updatedGeneration?.isGenerated || false,
           estimatedEndTime: null,
+          totalMatches,
+          processedMatches,
         };
       }
 
@@ -108,7 +112,7 @@ export class PubgDeathNoteService {
         });
       }
 
-      await this.processMatches(userId, false, taskId);
+      const { totalMatches, processedMatches } = await this.processMatches(userId, false, taskId);
 
       const updatedGeneration = await this.prisma.deathNoteGeneration.findUnique({
         where: { userId },
@@ -118,6 +122,8 @@ export class PubgDeathNoteService {
         userId,
         isGenerated: updatedGeneration?.isGenerated || false,
         estimatedEndTime: null,
+        totalMatches,
+        processedMatches,
       };
     } catch (error) {
       this.logger.error(`Error requesting death note generation by user ID:`, error);
@@ -174,9 +180,9 @@ export class PubgDeathNoteService {
       });
 
       await this.updateProgress(taskId, 100);
-      this.logger.log(`Force death note generation completed for user ${userId}`);
+      this.logger.log(`Force death note generation completed for user ${userId}. Processed ${localMatchFiles.length} matches.`);
 
-      return { userId, isGenerated: true };
+      return { userId, isGenerated: true, totalMatches: localMatchFiles.length, processedMatches: localMatchFiles.length };
     } catch (error) {
       this.logger.error(`Error force generating death note:`, error);
       throw error;
@@ -287,14 +293,14 @@ export class PubgDeathNoteService {
   /**
    * 处理用户的所有比赛（增量或全量）
    */
-  private async processMatches(userId: string, isIncremental: boolean, taskId?: string): Promise<void> {
+  private async processMatches(userId: string, isIncremental: boolean, taskId?: string): Promise<{ totalMatches: number; processedMatches: number }> {
     const generation = await this.prisma.deathNoteGeneration.findUnique({
       where: { userId },
     });
 
     if (!generation) {
       this.logger.error(`No death note generation record found for user ${userId}`);
-      return;
+      return { totalMatches: 0, processedMatches: 0 };
     }
 
     const matchIds = await this.matchService.getUserMatchHistory(userId);
@@ -317,7 +323,7 @@ export class PubgDeathNoteService {
 
     if (taskId && await this.taskService.isTaskCancelled(taskId)) {
       this.logger.log(`Task ${taskId} was cancelled, stopping processMatches`);
-      return;
+      return { totalMatches: matchesToProcess.length, processedMatches: 0 };
     }
 
     if (failedMatches.length > 0) {
@@ -327,7 +333,7 @@ export class PubgDeathNoteService {
 
     if (taskId && await this.taskService.isTaskCancelled(taskId)) {
       this.logger.log(`Task ${taskId} was cancelled, skipping final update`);
-      return;
+      return { totalMatches: matchesToProcess.length, processedMatches: matchesToProcess.length - failedMatches.length };
     }
 
     try {
@@ -345,7 +351,9 @@ export class PubgDeathNoteService {
 
     await this.cleanupProgress(userId);
     await this.updateProgress(taskId, 100);
-    this.logger.log(`Death note generation completed for user ${userId}. Processed ${matchesToProcess.length - failedMatches.length} matches.`);
+    const processedCount = matchesToProcess.length - failedMatches.length;
+    this.logger.log(`Death note generation completed for user ${userId}. Processed ${processedCount} matches.`);
+    return { totalMatches: matchesToProcess.length, processedMatches: processedCount };
   }
 
   /**
@@ -362,7 +370,7 @@ export class PubgDeathNoteService {
 
     if (newMatches.length === 0) {
       this.logger.log(`No new matches for user ${userId}`);
-      return { userId, isGenerated: true, estimatedEndTime: null };
+      return { userId, isGenerated: true, estimatedEndTime: null, totalMatches: 0, processedMatches: 0 };
     }
 
     this.logger.log(`Incremental update for user ${userId}: ${newMatches.length} new matches`);
@@ -388,7 +396,8 @@ export class PubgDeathNoteService {
     await this.cleanupProgress(userId);
     await this.updateProgress(taskId, 100);
 
-    return { userId, isGenerated: true, estimatedEndTime: null };
+    const processedCount = newMatches.length - failedMatches.length;
+    return { userId, isGenerated: true, estimatedEndTime: null, totalMatches: newMatches.length, processedMatches: processedCount };
   }
 
   /**
@@ -437,12 +446,15 @@ export class PubgDeathNoteService {
     await this.cleanupProgress(userId);
     await this.updateProgress(taskId, 100);
 
-    this.logger.log(`Death note generation resumed and completed for user ${userId}`);
+    const processedCount = allMatches.length - failedMatches.length;
+    this.logger.log(`Death note generation resumed and completed for user ${userId}. Processed ${processedCount} matches.`);
 
     return {
       userId,
       isGenerated: true,
       estimatedEndTime: null,
+      totalMatches: allMatches.length,
+      processedMatches: processedCount,
     };
   }
 
@@ -602,6 +614,7 @@ export class PubgDeathNoteService {
     if (matchData.telemetryEvents?.length > 0) {
       await this.matchService.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
     }
+    (matchData as any).telemetryEvents = null;
   }
 
   /**
@@ -616,7 +629,8 @@ export class PubgDeathNoteService {
       const matchId = matchIds[i];
       try {
         this.logger.log(`Fetching match ${matchId} (${i + 1}/${matchIds.length})...`);
-        await this.matchService.getMatchOriginalData(matchId);
+        const matchData = await this.matchService.getMatchOriginalData(matchId);
+        (matchData as any).telemetryEvents = null;
         
         const progress = 5 + Math.round(((i + 1) / matchIds.length) * 30);
         await this.updateProgress(taskId, progress);
@@ -639,6 +653,7 @@ export class PubgDeathNoteService {
         if (!match) {
           const matchData = await this.matchService.getMatchOriginalData(matchId);
           match = await this.matchService.saveMatch(matchId, matchData);
+          (matchData as any).telemetryEvents = null;
         }
 
         const matchData = await this.matchService.getMatchOriginalData(matchId);
@@ -657,6 +672,7 @@ export class PubgDeathNoteService {
         if (matchData.telemetryEvents?.length > 0) {
           await this.matchService.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
         }
+        (matchData as any).telemetryEvents = null;
 
         const progress = 40 + Math.round(((i + 1) / matchIds.length) * 55);
         await this.updateProgress(taskId, progress);
