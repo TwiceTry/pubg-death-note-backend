@@ -24,8 +24,12 @@ export function validateNickname(nickname: string): void {
 }
 
 export function validateUserId(userId: string): void {
+  const USER_ID_PREFIX = 'account.';
   if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
     throw new BadRequestException('userId is required');
+  }
+  if (!userId.startsWith(USER_ID_PREFIX)) {
+    throw new BadRequestException('Invalid user ID format');
   }
 }
 
@@ -37,5 +41,11 @@ export function validateDate(dateStr: string, fieldName = 'date'): void {
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) {
     throw new BadRequestException(`${fieldName} is not a valid date`);
+  }
+}
+
+export function validateMatchId(matchId: string, minLength = 32): void {
+  if (!matchId || typeof matchId !== 'string' || matchId.length < minLength) {
+    throw new BadRequestException(`Invalid match ID format. Must be at least ${minLength} characters.`);
   }
 }

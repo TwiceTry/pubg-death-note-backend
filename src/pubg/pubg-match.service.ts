@@ -7,57 +7,122 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PubgApiService } from './pubg-api.service';
 import { MatchDataResult, TelemetryKillEventV2, TelemetryEvent } from './pubg.interfaces';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
+import { TaskService } from '../task/task.service';
+import { ExecutableTask, getCurrentTaskContext } from '../task/task.decorator';
+
+interface MatchPaths {
+  matchDir: string;
+  telemetryDir: string;
+  matchFilePath: string;
+  telemetryFilePath: string;
+  dataFileName: string;
+}
 
 @Injectable()
 export class PubgMatchService {
-  private readonly GAME_DATA_DIR: string;
-  private readonly MATCH_DATA_SUBDIR = 'match-data';
-  private readonly TELEMETRY_DATA_SUBDIR = 'telemetry-data';
+  private readonly matchBaseDir: string;
+  private readonly telemetryBaseDir: string;
 
   constructor(
     private prisma: PrismaService,
     private pubgApi: PubgApiService,
     private configService: ConfigService,
+    private taskService: TaskService,
     private logger: DualOutputLoggerService,
   ) {
-    this.GAME_DATA_DIR = this.configService.get<string>('GAME_DATA_DIR', './game-data');
+    const gameDataDir = this.configService.get<string>('GAME_DATA_DIR', './game-data');
+    this.matchBaseDir = path.join(gameDataDir, 'match-data');
+    this.telemetryBaseDir = path.join(gameDataDir, 'telemetry-data');
   }
 
+  // ============================================================
+  // 数据获取（主入口）
+  // ============================================================
+
   /**
-   * 获取比赛原始数据（主入口）
-   * @param matchId 比赛 ID
-   * @returns 比赛数据
+   * 获取比赛原始数据
+   * 优先从本地缓存读取，不存在则调用 PUBG API 获取并缓存
    */
   async getMatchOriginalData(matchId: string): Promise<MatchDataResult> {
-    try {
-      const paths = this.getMatchPaths(matchId);
-      this.ensureDirectoriesExist(paths);
+    const paths = this.getMatchPaths(matchId);
+    this.ensureDirectoriesExist(paths);
 
-      // 优先从本地读取
-      const localData = await this.readLocalMatchData(matchId, paths);
-      if (localData) {
-        return localData;
-      }
-
-      // 本地不存在，从API获取
-      return await this.fetchMatchDataFromApi(matchId, paths);
-    } catch (error) {
-      this.logger.error(`Error getting match data for ${matchId}:`, error);
-      throw error;
+    const localData = await this.readLocalMatchData(matchId, paths);
+    if (localData) {
+      return localData;
     }
+
+    return this.fetchMatchDataFromApi(matchId);
   }
 
   /**
-   * 获取比赛相关文件路径
+   * 强制从 API 获取比赛原始数据（跳过本地缓存）
    */
-  private getMatchPaths(matchId: string, dateStr?: string): { matchDir: string; telemetryDir: string; matchFilePath: string; telemetryFilePath: string; dataFileName: string } {
-    const matchBaseDir = path.join(this.GAME_DATA_DIR, this.MATCH_DATA_SUBDIR);
-    const telemetryBaseDir = path.join(this.GAME_DATA_DIR, this.TELEMETRY_DATA_SUBDIR);
+  async fetchMatchDataFromApi(matchId: string): Promise<MatchDataResult> {
+    const matchData = await this.pubgApi.getMatch(matchId);
+
+    const telemetryUrl = (matchData.included || [])
+      .find(item => item.type === 'asset' && item.attributes?.name === 'telemetry')
+      ?.attributes?.URL;
+
+    const telemetryEvents = telemetryUrl
+      ? await this.pubgApi.getMatchTelemetry(telemetryUrl)
+      : [];
+
+    const dateStr = this.extractDateFromMatchData(matchData);
+    const datedPaths = this.getMatchPaths(matchId, dateStr);
+    this.ensureDirectoriesExist(datedPaths);
+    await this.saveMatchData(matchData, telemetryEvents, datedPaths);
+
+    return {
+      attributes: matchData.data.attributes,
+      telemetryEvents,
+      dataPath: datedPaths.matchFilePath,
+    };
+  }
+
+  // ============================================================
+  // 本地文件操作
+  // ============================================================
+
+  /**
+   * 获取本地所有 matchId（支持日期子目录和根目录）
+   */
+  getLocalMatchFiles(): string[] {
+    if (!fs.existsSync(this.matchBaseDir)) {
+      return [];
+    }
+
+    const matchIds: string[] = [];
+    const entries = fs.readdirSync(this.matchBaseDir);
+
+    for (const entry of entries) {
+      const fullPath = path.join(this.matchBaseDir, entry);
+      const stat = fs.statSync(fullPath);
+
+      if (stat.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry)) {
+        const files = fs.readdirSync(fullPath);
+        files
+          .filter(file => file.endsWith('.json'))
+          .forEach(file => matchIds.push(file.replace('.json', '')));
+      } else if (stat.isFile() && entry.endsWith('.json')) {
+        matchIds.push(entry.replace('.json', ''));
+      }
+    }
+
+    return matchIds;
+  }
+
+  /**
+   * 构建比赛文件路径
+   * @param dateStr 可选，格式 YYYY-MM-DD，用于按日期分目录存储
+   */
+  private getMatchPaths(matchId: string, dateStr?: string): MatchPaths {
     const dataFileName = `${matchId}.json`;
 
     if (dateStr) {
-      const matchDir = path.join(matchBaseDir, dateStr);
-      const telemetryDir = path.join(telemetryBaseDir, dateStr);
+      const matchDir = path.join(this.matchBaseDir, dateStr);
+      const telemetryDir = path.join(this.telemetryBaseDir, dateStr);
       return {
         matchDir,
         telemetryDir,
@@ -68,45 +133,16 @@ export class PubgMatchService {
     }
 
     return {
-      matchDir: matchBaseDir,
-      telemetryDir: telemetryBaseDir,
-      matchFilePath: path.join(matchBaseDir, dataFileName),
-      telemetryFilePath: path.join(telemetryBaseDir, dataFileName),
+      matchDir: this.matchBaseDir,
+      telemetryDir: this.telemetryBaseDir,
+      matchFilePath: path.join(this.matchBaseDir, dataFileName),
+      telemetryFilePath: path.join(this.telemetryBaseDir, dataFileName),
       dataFileName,
     };
   }
 
   /**
-   * 从比赛数据中提取日期字符串 (YYYY-MM-DD)
-   */
-  private extractDateFromMatchData(matchData: any): string {
-    try {
-      const createdAt = matchData.data?.attributes?.createdAt;
-      if (createdAt) {
-        const tz = this.configService.get<string>('TZ', 'Asia/Shanghai');
-        const date = new Date(createdAt);
-        return date.toLocaleDateString('sv-SE', { timeZone: tz });
-      }
-    } catch (error) {
-      this.logger.warn(`Failed to extract date from match data:`, error);
-    }
-    return '';
-  }
-
-  /**
-   * 确保目录存在
-   */
-  private ensureDirectoriesExist(paths: { matchDir: string; telemetryDir: string }): void {
-    if (!fs.existsSync(paths.matchDir)) {
-      fs.mkdirSync(paths.matchDir, { recursive: true });
-    }
-    if (!fs.existsSync(paths.telemetryDir)) {
-      fs.mkdirSync(paths.telemetryDir, { recursive: true });
-    }
-  }
-
-  /**
-   * 查找比赛文件（支持按日期文件夹搜索）
+   * 查找比赛文件，优先根目录，再遍历日期子目录
    */
   private findMatchFile(baseDir: string, fileName: string): string | null {
     const directPath = path.join(baseDir, fileName);
@@ -134,23 +170,52 @@ export class PubgMatchService {
   }
 
   /**
-   * 读取本地比赛数据
+   * 确保 match 和 telemetry 目录存在
    */
-  private async readLocalMatchData(matchId: string, paths: { matchFilePath: string; telemetryFilePath: string }): Promise<MatchDataResult | null> {
-    try {
-      const matchBaseDir = path.join(this.GAME_DATA_DIR, this.MATCH_DATA_SUBDIR);
-      const telemetryBaseDir = path.join(this.GAME_DATA_DIR, this.TELEMETRY_DATA_SUBDIR);
-      const dataFileName = `${matchId}.json`;
+  private ensureDirectoriesExist(paths: { matchDir: string; telemetryDir: string }): void {
+    if (!fs.existsSync(paths.matchDir)) {
+      fs.mkdirSync(paths.matchDir, { recursive: true });
+    }
+    if (!fs.existsSync(paths.telemetryDir)) {
+      fs.mkdirSync(paths.telemetryDir, { recursive: true });
+    }
+  }
 
-      const matchFile = this.findMatchFile(matchBaseDir, dataFileName);
-      const telemetryFile = this.findMatchFile(telemetryBaseDir, dataFileName);
+  /**
+   * 从比赛数据中提取日期字符串 (YYYY-MM-DD)
+   * 使用时区配置 TZ，默认 Asia/Shanghai
+   */
+  private extractDateFromMatchData(matchData: any): string {
+    try {
+      const createdAt = matchData.data?.attributes?.createdAt;
+      if (createdAt) {
+        const tz = this.configService.get<string>('TZ', 'Asia/Shanghai');
+        const date = new Date(createdAt);
+        return date.toLocaleDateString('sv-SE', { timeZone: tz });
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to extract date from match data:`, error);
+    }
+    return '';
+  }
+
+  // ============================================================
+  // 数据读写（本地缓存）
+  // ============================================================
+
+  /**
+   * 读取本地缓存的比赛数据
+   * @returns 存在则返回 MatchDataResult，不存在返回 null
+   */
+  private async readLocalMatchData(matchId: string, paths: MatchPaths): Promise<MatchDataResult | null> {
+    try {
+      const matchFile = this.findMatchFile(this.matchBaseDir, paths.dataFileName);
+      const telemetryFile = this.findMatchFile(this.telemetryBaseDir, paths.dataFileName);
 
       if (matchFile && telemetryFile) {
         const matchData = JSON.parse(fs.readFileSync(matchFile, 'utf-8'));
         const telemetryEvents = JSON.parse(fs.readFileSync(telemetryFile, 'utf-8'));
-        
-        this.logger.log(`Loaded match data from local files for ${matchId}`);
-        
+
         return {
           attributes: matchData.data.attributes,
           telemetryEvents,
@@ -165,48 +230,19 @@ export class PubgMatchService {
   }
 
   /**
-   * 从API获取比赛数据
+   * 保存比赛数据和遥测数据到本地 JSON 文件
    */
-  private async fetchMatchDataFromApi(matchId: string, paths: { matchFilePath: string; telemetryFilePath: string }): Promise<MatchDataResult> {
-    const matchData = await this.pubgApi.getMatch(matchId);
-    
-    let telemetryUrl: string | undefined;
-    const included = matchData.included || [];
-    for (const item of included) {
-      if (item.type === 'asset' && item.attributes?.name === 'telemetry') {
-        telemetryUrl = item.attributes.URL;
-        break;
-      }
-    }
-    
-    const telemetryEvents = telemetryUrl ? await this.pubgApi.getMatchTelemetry(telemetryUrl) : [];
-    
-    const dateStr = this.extractDateFromMatchData(matchData);
-    const datedPaths = this.getMatchPaths(matchId, dateStr);
-    this.ensureDirectoriesExist(datedPaths);
-    
-    await this.saveMatchData(matchData, telemetryEvents, datedPaths);
-    
-    return {
-      attributes: matchData.data.attributes,
-      telemetryEvents,
-      dataPath: datedPaths.matchFilePath,
-    };
-  }
-
-  /**
-   * 保存比赛数据到本地
-   */
-  private async saveMatchData(matchData: any, telemetryEvents: any[], paths: { matchFilePath: string; telemetryFilePath: string }): Promise<void> {
+  private async saveMatchData(matchData: any, telemetryEvents: any[], paths: MatchPaths): Promise<void> {
     fs.writeFileSync(paths.matchFilePath, JSON.stringify({ data: matchData.data, included: matchData.included }, null, 2));
-    this.logger.log(`Saved match data to: ${paths.matchFilePath}`);
-
     fs.writeFileSync(paths.telemetryFilePath, JSON.stringify(telemetryEvents, null, 2));
-    this.logger.log(`Saved telemetry data to: ${paths.telemetryFilePath}`);
   }
 
+  // ============================================================
+  // 数据库操作
+  // ============================================================
+
   /**
-   * 保存比赛到数据库
+   * 保存/更新比赛信息到 Match 表
    */
   async saveMatch(matchId: string, matchData: MatchDataResult): Promise<any> {
     return this.prisma.match.upsert({
@@ -227,49 +263,81 @@ export class PubgMatchService {
   }
 
   /**
-   * 通过用户 ID 获取历史对局数据（最近14天的所有比赛）
-   * @param userId 用户 ID
-   * @returns 比赛 ID 列表
+   * 解析遥测数据中的击杀事件并保存到 KillEvent 表
+   * 解析后会清空 telemetryEvents 数组释放内存
    */
-  async getUserMatchHistory(userId: string): Promise<string[]> {
-    return this.pubgApi.getPlayerMatches(userId);
-  }
+  async parseAndSaveKillEvents(matchId: string, telemetryEvents: TelemetryEvent[]): Promise<void> {
+    const killEvents = telemetryEvents.filter(event =>
+      event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill'
+    ) as TelemetryKillEventV2[];
 
-  /**
-   * 获取本地存储的所有 match 文件
-   * @returns matchId 列表
-   */
-  getLocalMatchFiles(): string[] {
-    const matchDir = path.join(this.GAME_DATA_DIR, this.MATCH_DATA_SUBDIR);
-    
-    if (!fs.existsSync(matchDir)) {
-      return [];
+    telemetryEvents.length = 0;
+
+    if (killEvents.length === 0) {
+      this.logger.log(`No kill events found in telemetry for match ${matchId}`);
+      return;
     }
-    
-    const matchIds: string[] = [];
-    
-    const entries = fs.readdirSync(matchDir);
-    for (const entry of entries) {
-      const fullPath = path.join(matchDir, entry);
-      const stat = fs.statSync(fullPath);
-      
-      if (stat.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry)) {
-        const files = fs.readdirSync(fullPath);
-        files
-          .filter(file => file.endsWith('.json'))
-          .forEach(file => matchIds.push(file.replace('.json', '')));
-      } else if (stat.isFile() && entry.endsWith('.json')) {
-        matchIds.push(entry.replace('.json', ''));
+
+    const parsedEvents = killEvents
+      .map(event => this.parseKillEvent(event))
+      .filter((parsed): parsed is NonNullable<typeof parsed> => parsed !== null);
+
+    if (parsedEvents.length === 0) {
+      this.logger.log(`No valid kill events found for match ${matchId}`);
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const parsed of parsedEvents) {
+        await tx.killEvent.upsert({
+          where: {
+            matchId_victimId_timestamp: {
+              matchId,
+              victimId: parsed.victimId,
+              timestamp: parsed.timestamp,
+            },
+          },
+          update: {
+            killerId: parsed.killerId,
+            killerName: parsed.killerName,
+            victimName: parsed.victimName,
+            weaponId: parsed.weaponId,
+            distance: parsed.distance,
+            isHeadshot: parsed.isHeadshot,
+          },
+          create: {
+            matchId,
+            killerId: parsed.killerId,
+            killerName: parsed.killerName,
+            victimId: parsed.victimId,
+            victimName: parsed.victimName,
+            weaponId: parsed.weaponId,
+            distance: parsed.distance,
+            isHeadshot: parsed.isHeadshot,
+            timestamp: parsed.timestamp,
+          },
+        });
       }
-    }
-    
-    return matchIds;
+    });
+
+    this.logger.log(`Successfully saved ${parsedEvents.length} kill events for match ${matchId}`);
   }
 
   /**
    * 解析单个击杀事件
+   * 兼容 LogPlayerKillV2 和 LogPlayerKill 两种格式
+   * @returns 解析后的击杀事件，victimId 为空时返回 null
    */
-  private parseKillEvent(event: TelemetryKillEventV2): { killerId: string | null; killerName: string | null; victimId: string; victimName: string; weaponId: string; distance: number; isHeadshot: boolean; timestamp: Date } | null {
+  private parseKillEvent(event: TelemetryKillEventV2): {
+    killerId: string | null;
+    killerName: string | null;
+    victimId: string;
+    victimName: string;
+    weaponId: string;
+    distance: number;
+    isHeadshot: boolean;
+    timestamp: Date;
+  } | null {
     let killerId: string | null;
     let killerName: string | null;
     let victimId: string;
@@ -284,7 +352,7 @@ export class PubgMatchService {
       killerName = event.killer?.name || null;
       victimId = event.victim?.accountId || '';
       victimName = event.victim?.name || '';
-      weaponId = event.killerDamageInfo?.damageCauserName || event.finishDamageInfo?.damageCauserName || 'Unknown';
+      weaponId = this.getFirstDefined(event.killerDamageInfo?.damageCauserName, event.finishDamageInfo?.damageCauserName);
       distance = event.killerDamageInfo?.distance || event.finishDamageInfo?.distance || 0;
       isHeadshot = event.killerDamageInfo?.damageReason === 'HeadShot' || event.finishDamageInfo?.damageReason === 'HeadShot';
       timestamp = new Date(event._D);
@@ -293,7 +361,7 @@ export class PubgMatchService {
       killerName = event.character?.name || null;
       victimId = event.victim?.accountId || '';
       victimName = event.victim?.name || '';
-      weaponId = event.weapon?.weaponId || event.weapon?.weaponClass || 'Unknown';
+      weaponId = this.getFirstDefined(event.weapon?.weaponId, event.weapon?.weaponClass);
       distance = event.distance || 0;
       isHeadshot = event.isHeadshot || false;
       timestamp = new Date(event.timestamp || event._D);
@@ -304,109 +372,193 @@ export class PubgMatchService {
     }
 
     if (!killerId) {
-      weaponId = event.finishDamageInfo?.damageTypeCategory || event.killerDamageInfo?.damageTypeCategory || weaponId;
+      weaponId = this.getFirstDefined(event.finishDamageInfo?.damageTypeCategory, event.killerDamageInfo?.damageTypeCategory, weaponId);
     }
 
     return { killerId, killerName, victimId, victimName, weaponId, distance, isHeadshot, timestamp };
   }
 
   /**
-   * 解析遥测数据中的击杀事件并保存到数据库
-   * @param matchId 比赛 ID
-   * @param telemetryEvents 遥测事件数组
+   * 返回第一个非空字符串
    */
-  async parseAndSaveKillEvents(matchId: string, telemetryEvents: TelemetryEvent[]): Promise<void> {
-    try {
-      const killEvents = telemetryEvents.filter(event =>
-        event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill'
-      ) as TelemetryKillEventV2[];
-
-      (telemetryEvents as any).length = 0;
-
-      if (killEvents.length === 0) {
-        this.logger.log(`No kill events found in telemetry for match ${matchId}`);
-        return;
-      }
-
-      this.logger.log(`Found ${killEvents.length} kill events in telemetry for match ${matchId}`);
-
-      const parsedEvents = killEvents
-        .map(event => this.parseKillEvent(event))
-        .filter((parsed): parsed is NonNullable<typeof parsed> => parsed !== null);
-
-      if (parsedEvents.length === 0) {
-        this.logger.log(`No valid kill events found for match ${matchId}`);
-        return;
-      }
-
-      await this.prisma.$transaction(async (tx) => {
-        for (const parsed of parsedEvents) {
-          await tx.killEvent.upsert({
-            where: {
-              matchId_victimId_timestamp: {
-                matchId,
-                victimId: parsed.victimId,
-                timestamp: parsed.timestamp,
-              },
-            },
-            update: {
-              killerId: parsed.killerId,
-              killerName: parsed.killerName,
-              victimName: parsed.victimName,
-              weaponId: parsed.weaponId,
-              distance: parsed.distance,
-              isHeadshot: parsed.isHeadshot,
-            },
-            create: {
-              matchId,
-              killerId: parsed.killerId,
-              killerName: parsed.killerName,
-              victimId: parsed.victimId,
-              victimName: parsed.victimName,
-              weaponId: parsed.weaponId,
-              distance: parsed.distance,
-              isHeadshot: parsed.isHeadshot,
-              timestamp: parsed.timestamp,
-            },
-          });
-        }
-      });
-
-      this.logger.log(`Successfully saved ${parsedEvents.length} kill events for match ${matchId}`);
-    } catch (error) {
-      this.logger.error(`Error parsing kill events for match ${matchId}:`, error);
-      throw error;
-    }
+  private getFirstDefined(...values: (string | undefined)[]): string {
+    return values.find(v => v !== undefined && v !== '') || 'Unknown';
   }
 
   /**
-   * 处理遥测数据
-   * @param userId 用户 ID
-   * @param matchId 比赛 ID
+   * 从比赛数据中提取所有参与者 playerId
    */
-  async processTelemetryData(userId: string, matchId: string): Promise<void> {
-    try {
-      // 获取比赛数据（内部会自动解析击杀事件）
-      await this.getMatchOriginalData(matchId);
+  private extractParticipants(matchData: any): string[] {
+    const participants = new Set<string>();
 
-      this.logger.log(`Processed telemetry data for match ${matchId}`);
-    } catch (error) {
-      this.logger.error(`Error processing telemetry data for match ${matchId}:`, error);
-      throw error;
+    if (matchData.included && Array.isArray(matchData.included)) {
+      for (const item of matchData.included) {
+        if (item.type === 'participant' && item.attributes?.stats?.playerId) {
+          participants.add(item.attributes.stats.playerId);
+        }
+      }
     }
+
+    return Array.from(participants);
+  }
+
+  // ============================================================
+  // 比赛同步
+  // ============================================================
+
+  /**
+   * 处理单场比赛同步
+   * 1. 获取比赛数据（本地或 API）
+   * 2. 保存到 Match 表
+   * 3. 关联已生成死亡笔记的用户到 UserMatch 表
+   * 4. 解析击杀事件到 KillEvent 表
+   */
+  private async processSingleMatchSync(
+    matchId: string,
+    deathNoteUserIds: Set<string>,
+  ): Promise<{ newMatches: number; updatedMatches: number; newUserMatches: number; newKillEvents: number }> {
+    const matchData = await this.getMatchOriginalData(matchId);
+    const existingMatch = await this.prisma.match.findUnique({ where: { id: matchId } });
+
+    await this.saveMatch(matchId, matchData);
+
+    const participants = this.extractParticipants(matchData);
+    const matchedUsers = participants.filter(p => deathNoteUserIds.has(p));
+
+    let newUserMatches = 0;
+    for (const userId of matchedUsers) {
+      await this.prisma.userMatch.upsert({
+        where: { userId_matchId: { userId, matchId } },
+        update: {},
+        create: { userId, matchId },
+      });
+      newUserMatches++;
+    }
+
+    let newKillEvents = 0;
+    if (matchData.telemetryEvents?.length > 0) {
+      newKillEvents = matchData.telemetryEvents.filter(event =>
+        event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill',
+      ).length;
+      await this.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
+    }
+
+    return {
+      newMatches: existingMatch ? 0 : 1,
+      updatedMatches: existingMatch ? 1 : 0,
+      newUserMatches,
+      newKillEvents,
+    };
+  }
+
+  /**
+   * 同步本地所有 match 数据到数据库
+   * 遍历本地 game-data 目录，将 match/userMatch/killEvent 同步到数据库
+   * 所有操作使用 upsert，重复数据不会重复添加
+   */
+  @ExecutableTask({
+    type: 'sync_local_matches',
+    async: true,
+    buildResult: (result) => ({
+      success: true,
+      message: (result as { message?: string })?.message || 'Local match sync completed',
+      ...(result as Record<string, unknown>),
+    }),
+  })
+  async syncLocalMatches(): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; newMatches: number; updatedMatches: number; newUserMatches: number; newKillEvents: number }> {
+    const localMatchIds = this.getLocalMatchFiles();
+    const totalMatches = localMatchIds.length;
+
+    if (totalMatches === 0) {
+      return { success: true, message: 'No local match files found', totalMatches: 0, processedMatches: 0, newMatches: 0, updatedMatches: 0, newUserMatches: 0, newKillEvents: 0 };
+    }
+
+    const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
+      where: { isGenerated: true },
+      select: { userId: true },
+    });
+    const deathNoteUserIds = new Set(deathNoteUsers.map(u => u.userId));
+
+    let processedMatches = 0;
+    let newMatches = 0;
+    let updatedMatches = 0;
+    let newUserMatches = 0;
+    let newKillEvents = 0;
+
+    for (const matchId of localMatchIds) {
+      getCurrentTaskContext()?.checkCancelled();
+
+      try {
+        const result = await this.processSingleMatchSync(matchId, deathNoteUserIds);
+        newMatches += result.newMatches;
+        updatedMatches += result.updatedMatches;
+        newUserMatches += result.newUserMatches;
+        newKillEvents += result.newKillEvents;
+      } catch (error) {
+        this.logger.warn(`Failed to sync match ${matchId}: ${error.message}`);
+      } finally {
+        processedMatches++;
+        await getCurrentTaskContext()?.updateProgress(Math.round((processedMatches / totalMatches) * 100));
+
+        if (processedMatches % 10 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
+    }
+
+    return {
+      success: true,
+      message: `Local match sync completed: ${processedMatches}/${totalMatches} matches`,
+      totalMatches,
+      processedMatches,
+      newMatches,
+      updatedMatches,
+      newUserMatches,
+      newKillEvents,
+    };
+  }
+
+  // ============================================================
+  // 遥测重解析
+  // ============================================================
+
+  /**
+   * 获取用户历史比赛 ID 列表（最近 14 天）
+   */
+  async getUserMatchHistory(userId: string): Promise<string[]> {
+    const players = await this.pubgApi.getPlayersByIds(userId);
+    return players[0]?.matches || [];
+  }
+
+  /**
+   * 批量获取多个用户的比赛ID列表
+   * 复用 getPlayersByIds 的批量查询能力，每批最多10个用户
+   */
+  private async getPlayersMatchesBatch(playerIds: string[]): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+
+    for (let i = 0; i < playerIds.length; i += 10) {
+      const batch = playerIds.slice(i, i + 10);
+      const players = await this.pubgApi.getPlayersByIds(batch);
+
+      for (const player of players) {
+        result.set(player.id, player.matches || []);
+      }
+    }
+
+    return result;
   }
 
   /**
    * 重解析单场比赛遥测数据
+   * 删除本地缓存后重新从 API 获取并解析击杀事件
    */
-  async reparseMatchTelemetry(matchId: string, taskId?: string): Promise<{ success: boolean; matchId: string; message: string }> {
+  async reparseMatchTelemetry(matchId: string): Promise<{ success: boolean; matchId: string; message: string }> {
     try {
-      const matchBaseDir = path.join(this.GAME_DATA_DIR, this.MATCH_DATA_SUBDIR);
-      const telemetryBaseDir = path.join(this.GAME_DATA_DIR, this.TELEMETRY_DATA_SUBDIR);
       const dataFileName = `${matchId}.json`;
 
-      const matchFile = this.findMatchFile(matchBaseDir, dataFileName);
-      const telemetryFile = this.findMatchFile(telemetryBaseDir, dataFileName);
+      const matchFile = this.findMatchFile(this.matchBaseDir, dataFileName);
+      const telemetryFile = this.findMatchFile(this.telemetryBaseDir, dataFileName);
 
       if (matchFile) {
         fs.unlinkSync(matchFile);
@@ -415,19 +567,10 @@ export class PubgMatchService {
         fs.unlinkSync(telemetryFile);
       }
 
-      await this.getMatchOriginalData(matchId);
-      
-      const newTelemetryFile = this.findMatchFile(telemetryBaseDir, dataFileName);
-      if (newTelemetryFile) {
-        const telemetryEvents = JSON.parse(fs.readFileSync(newTelemetryFile, 'utf-8'));
-        await this.parseAndSaveKillEvents(matchId, telemetryEvents);
-      }
+      const matchData = await this.getMatchOriginalData(matchId);
 
-      if (taskId) {
-        await this.prisma.task.update({
-          where: { id: taskId },
-          data: { progress: 100 },
-        });
+      if (matchData.telemetryEvents?.length > 0) {
+        await this.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
       }
 
       return { success: true, matchId, message: 'Match telemetry reparse completed' };
@@ -440,196 +583,97 @@ export class PubgMatchService {
   /**
    * 重解析用户所有比赛遥测数据（带进度回调）
    */
-  async reparseUserTelemetryWithProgress(
-    userId: string,
-    progressCallback: (current: number, total: number, percentage: number) => Promise<void>,
-    isCancelled?: () => Promise<boolean>,
-  ): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; userId: string }> {
-    try {
-      const matchIds = await this.getUserMatchHistory(userId);
-      const totalMatches = matchIds.length;
-      let processedMatches = 0;
+  @ExecutableTask({
+    type: 'reparse_user',
+    getUserId: (args) => args[0] as string,
+    async: true,
+    buildResult: (result) => ({
+      success: true,
+      message: (result as { message?: string })?.message || 'User telemetry reparse completed',
+      ...(result as Record<string, unknown>),
+    }),
+  })
+  async reparseUserTelemetryWithProgress(userId: string): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; successMatches: number; failedMatches: number; userId: string }> {
+    const matchIds = await this.getUserMatchHistory(userId);
+    const totalMatches = matchIds.length;
+    let processedMatches = 0;
+    let successMatches = 0;
+    let failedMatches = 0;
 
-      for (const matchId of matchIds) {
-        if (isCancelled && await isCancelled()) {
-          return { success: false, message: 'Task was cancelled', totalMatches, processedMatches, userId };
-        }
+    for (const matchId of matchIds) {
+      getCurrentTaskContext()?.checkCancelled();
 
-        try {
-          await this.reparseMatchTelemetry(matchId);
-          processedMatches++;
-        } catch (error) {
-          this.logger.warn(`Failed to reparse match ${matchId}: ${error.message}`);
+      try {
+        const result = await this.reparseMatchTelemetry(matchId);
+        if (result.success) {
+          successMatches++;
+        } else {
+          failedMatches++;
         }
-        
-        await progressCallback(processedMatches, totalMatches, Math.round((processedMatches / totalMatches) * 100));
+      } catch (error) {
+        this.logger.warn(`Failed to reparse match ${matchId}: ${error.message}`);
+        failedMatches++;
       }
 
-      return { success: true, message: `User telemetry reparse completed: ${processedMatches}/${totalMatches} matches`, totalMatches, processedMatches, userId };
-    } catch (error) {
-      this.logger.error(`Error reparsing user telemetry for ${userId}:`, error);
-      return { success: false, message: error.message || 'Unknown error', totalMatches: 0, processedMatches: 0, userId };
+      processedMatches++;
+      await getCurrentTaskContext()?.updateProgress(Math.round((processedMatches / totalMatches) * 100));
     }
-  }
 
-  /**
-   * 从比赛数据中提取参与者 ID 列表
-   */
-  private extractParticipants(matchData: any): string[] {
-    const participants = new Set<string>();
-    
-    if (matchData.included && Array.isArray(matchData.included)) {
-      for (const item of matchData.included) {
-        if (item.type === 'participant' && item.attributes?.stats?.playerId) {
-          participants.add(item.attributes.stats.playerId);
-        }
-      }
-    }
-    
-    return Array.from(participants);
-  }
-
-  /**
-   * 同步本地所有 match 数据到数据库
-   * 读取本地 game-data，将 match 添加到 Match 表，
-   * 检查是否有已生成死亡笔记的用户参与，有的话添加 UserMatch 表，
-   * 然后解析到 KillEvent 表
-   * 所有操作使用 upsert，重复数据不会重复添加
-   */
-  async syncLocalMatches(
-    progressCallback: (current: number, total: number, percentage: number) => Promise<void>,
-    isCancelled?: () => Promise<boolean>,
-  ): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; newMatches: number; updatedMatches: number; newUserMatches: number; newKillEvents: number }> {
-    try {
-      const localMatchIds = this.getLocalMatchFiles();
-      const totalMatches = localMatchIds.length;
-
-      if (totalMatches === 0) {
-        return { success: true, message: 'No local match files found', totalMatches: 0, processedMatches: 0, newMatches: 0, updatedMatches: 0, newUserMatches: 0, newKillEvents: 0 };
-      }
-
-      const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
-        where: { isGenerated: true },
-        select: { userId: true },
-      });
-      const deathNoteUserIds = new Set(deathNoteUsers.map(u => u.userId));
-
-      let processedMatches = 0;
-      let newMatches = 0;
-      let updatedMatches = 0;
-      let newUserMatches = 0;
-      let newKillEvents = 0;
-
-      for (const matchId of localMatchIds) {
-        if (isCancelled && await isCancelled()) {
-          return { success: false, message: 'Task was cancelled', totalMatches, processedMatches, newMatches, updatedMatches, newUserMatches, newKillEvents };
-        }
-
-        try {
-          const matchData = await this.getMatchOriginalData(matchId);
-          const existingMatch = await this.prisma.match.findUnique({ where: { id: matchId } });
-
-          await this.saveMatch(matchId, matchData);
-
-          if (existingMatch) {
-            updatedMatches++;
-          } else {
-            newMatches++;
-          }
-
-          const participants = this.extractParticipants(matchData);
-          const matchedUsers = participants.filter(p => deathNoteUserIds.has(p));
-
-          if (matchedUsers.length > 0) {
-            for (const userId of matchedUsers) {
-              await this.prisma.userMatch.upsert({
-                where: {
-                  userId_matchId: { userId, matchId },
-                },
-                update: {},
-                create: { userId, matchId },
-              });
-              newUserMatches++;
-            }
-          }
-
-          if (matchData.telemetryEvents?.length > 0) {
-            const killEvents = matchData.telemetryEvents.filter(event =>
-              event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill',
-            );
-            newKillEvents += killEvents.length;
-            await this.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
-          }
-
-          (matchData as any).telemetryEvents = null;
-        } catch (error) {
-          this.logger.warn(`Failed to sync match ${matchId}: ${error.message}`);
-        } finally {
-          processedMatches++;
-          await progressCallback(processedMatches, totalMatches, Math.round((processedMatches / totalMatches) * 100));
-
-          if (processedMatches % 10 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-        }
-      }
-
-      return {
-        success: true,
-        message: `Local match sync completed: ${processedMatches}/${totalMatches} matches`,
-        totalMatches,
-        processedMatches,
-        newMatches,
-        updatedMatches,
-        newUserMatches,
-        newKillEvents,
-      };
-    } catch (error) {
-      this.logger.error('Error syncing local matches:', error);
-      return { success: false, message: error.message || 'Unknown error', totalMatches: 0, processedMatches: 0, newMatches: 0, updatedMatches: 0, newUserMatches: 0, newKillEvents: 0 };
-    }
+    return { success: true, message: `User telemetry reparse completed: ${successMatches}/${totalMatches} matches`, totalMatches, processedMatches, successMatches, failedMatches, userId };
   }
 
   /**
    * 重解析所有用户比赛遥测数据（带进度回调）
+   * 使用批量 API 一次性获取所有用户的比赛，避免逐个查询
    */
-  async reparseAllTelemetryWithProgress(
-    progressCallback: (current: number, total: number, percentage: number) => Promise<void>,
-  ): Promise<{ success: boolean; message: string; totalUsers: number; processedUsers: number; totalMatches: number; processedMatches: number }> {
-    try {
-      const users = await this.prisma.user.findMany({ select: { pubgId: true } });
-      const totalUsers = users.length;
-      let processedUsers = 0;
-      let totalMatches = 0;
-      let processedMatches = 0;
+  @ExecutableTask({
+    type: 'reparse_all',
+    async: true,
+    buildResult: (result) => ({
+      success: true,
+      message: (result as { message?: string })?.message || 'All telemetry reparse completed',
+      ...(result as Record<string, unknown>),
+    }),
+  })
+  async reparseAllTelemetryWithProgress(): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; successMatches: number; failedMatches: number }> {
+    const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
+      where: { isGenerated: true },
+      select: { userId: true },
+    });
 
-      for (const user of users) {
-        try {
-          const matchIds = await this.getUserMatchHistory(user.pubgId);
-          totalMatches += matchIds.length;
+    const userIds = deathNoteUsers.map(u => u.userId);
+    const playersMatches = await this.getPlayersMatchesBatch(userIds);
 
-          for (const matchId of matchIds) {
-            try {
-              await this.reparseMatchTelemetry(matchId);
-              processedMatches++;
-            } catch (error) {
-              this.logger.warn(`Failed to reparse match ${matchId}: ${error.message}`);
-            }
-          }
+    const allMatchIds = new Set<string>();
+    for (const [, matchIds] of playersMatches) {
+      matchIds.forEach(id => allMatchIds.add(id));
+    }
 
-          processedUsers++;
-        } catch (error) {
-          this.logger.warn(`Failed to process user ${user.pubgId}: ${error.message}`);
-          processedUsers++;
+    const matchIds = Array.from(allMatchIds);
+    const totalMatches = matchIds.length;
+    let processedMatches = 0;
+    let successMatches = 0;
+    let failedMatches = 0;
+
+    for (const matchId of matchIds) {
+      getCurrentTaskContext()?.checkCancelled();
+
+      try {
+        const result = await this.reparseMatchTelemetry(matchId);
+        if (result.success) {
+          successMatches++;
+        } else {
+          failedMatches++;
         }
-        
-        await progressCallback(processedUsers, totalUsers, Math.round((processedUsers / totalUsers) * 100));
+      } catch (error) {
+        this.logger.warn(`Failed to reparse match ${matchId}: ${error.message}`);
+        failedMatches++;
       }
 
-      return { success: true, message: `All telemetry reparse completed: ${processedUsers}/${totalUsers} users, ${processedMatches}/${totalMatches} matches`, totalUsers, processedUsers, totalMatches, processedMatches };
-    } catch (error) {
-      this.logger.error('Error reparsing all telemetry:', error);
-      return { success: false, message: error.message || 'Unknown error', totalUsers: 0, processedUsers: 0, totalMatches: 0, processedMatches: 0 };
+      processedMatches++;
+      await getCurrentTaskContext()?.updateProgress(Math.round((processedMatches / totalMatches) * 100));
     }
+
+    return { success: true, message: `All telemetry reparse completed: ${successMatches}/${totalMatches} matches`, totalMatches, processedMatches, successMatches, failedMatches };
   }
 }

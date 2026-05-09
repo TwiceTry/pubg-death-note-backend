@@ -52,25 +52,6 @@ export class DeathNoteController {
   }
 
   /**
-   * 查询死亡笔记生成状态
-   * GET /api/v1/death-note/nickname/:nickname/status
-   */
-  @Get('nickname/:nickname/status')
-  async getDeathNoteGenerationStatus(@Param('nickname') nickname: string) {
-    try {
-      validateNickname(nickname);
-      const result = await this.deathNoteService.getDeathNoteGenerationStatus(nickname);
-      return this.successResponse(result);
-    } catch (error) {
-      this.logger.error(`Error getting death note status for ${nickname}:`, error);
-      throw new HttpException(
-        error.message || 'Failed to get death note status',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  /**
    * 查询当前用户是否击杀过指定昵称的玩家
    * GET /api/v1/death-note/nickname/:nickname/victim/:victimNickname
    */
@@ -129,30 +110,6 @@ export class DeathNoteController {
   }
 
   /**
-   * 获取死亡笔记数据
-   * GET /api/v1/death-note/nickname/:nickname
-   */
-  @Get('nickname/:nickname')
-  async getDeathNoteByNickname(@Param('nickname') nickname: string) {
-    try {
-      validateNickname(nickname);
-      const result = await this.deathNoteService.getDeathNoteByNickname(nickname);
-      
-      if (result.error) {
-        return this.errorResponse(result.error);
-      }
-      
-      return this.successResponse(result);
-    } catch (error) {
-      this.logger.error(`Error getting death note for ${nickname}:`, error);
-      throw new HttpException(
-        error.message || 'Failed to get death note data',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  /**
    * 分页获取死亡笔记数据（按天分组）
    * GET /api/v1/death-note/nickname/:nickname/matches?page=1&pageSize=10
    * GET /api/v1/death-note/nickname/:nickname/matches?date=2024-01-01
@@ -196,64 +153,5 @@ export class DeathNoteController {
   @Get('i18n/game-data')
   getGameDataI18n() {
     return this.successResponse(this.gameDataI18nService.getI18nData());
-  }
-
-  /**
-   * 请求生成死亡笔记（已停用，仅保留管理后台生成）
-   * POST /api/v1/death-note/nickname/:nickname/generate
-   */
-  // @Post('nickname/:nickname/generate')
-  // async requestDeathNoteGeneration(@Param('nickname') nickname: string) {
-  //   try {
-  //     validateNickname(nickname);
-  //     const result = await this.deathNoteService.requestDeathNoteGeneration(nickname);
-  //     return this.successResponse(result, 'Death note generation task created');
-  //   } catch (error) {
-  //     this.logger.error(`Error requesting death note generation for ${nickname}:`, error);
-  //     throw new HttpException(
-  //       error.message || 'Failed to request death note generation',
-  //       HttpStatus.INTERNAL_SERVER_ERROR,
-  //     );
-  //   }
-  // }
-
-  /**
-   * 强制重新生成死亡笔记（已停用，仅保留管理后台生成）
-   * POST /api/v1/death-note/nickname/:nickname/generate/force
-   */
-  // @Post('nickname/:nickname/generate/force')
-  // async forceDeathNoteGeneration(@Param('nickname') nickname: string) {
-  //   try {
-  //     validateNickname(nickname);
-  //     const result = await this.deathNoteService.forceDeathNoteGeneration(nickname);
-  //     return this.successResponse(result, 'Force death note generation task created');
-  //   } catch (error) {
-  //     this.logger.error(`Error force generating death note for ${nickname}:`, error);
-  //     throw new HttpException(
-  //       error.message || 'Failed to force generate death note',
-  //       HttpStatus.INTERNAL_SERVER_ERROR,
-  //     );
-  //   }
-  // }
-
-  /**
-   * 手动刷新赛季信息
-   * POST /api/v1/death-note/seasons/refresh
-   */
-  @Post('seasons/refresh')
-  async refreshSeasons() {
-    try {
-      const result = await this.deathNoteService.refreshSeasons();
-      if (result.success) {
-        return this.successResponse(result, 'Seasons refreshed successfully');
-      }
-      return this.errorResponse(result.error || 'Failed to refresh seasons');
-    } catch (error) {
-      this.logger.error(`Error refreshing seasons:`, error);
-      throw new HttpException(
-        error.message || 'Failed to refresh seasons',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
   }
 }

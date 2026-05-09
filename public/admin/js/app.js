@@ -81,6 +81,20 @@ function formatDate(dateStr) {
   return new Date(dateStr).toLocaleString('zh-CN', { hour12: false });
 }
 
+function formatTaskType(type) {
+  const typeMap = {
+    'death_note_generate': '初次生成',
+    'death_note_incremental_update': '增量更新',
+    'death_note_force_generate': '强制生成',
+    'death_note_resume': '断点续传',
+    'reparse_all': '重解析全部',
+    'reparse_user': '用户重解析',
+    'reparse_match': '单场重解析',
+    'sync_local_matches': '同步本地数据',
+  };
+  return typeMap[type] || type || '-';
+}
+
 // ==================== 任务管理 ====================
 
 let taskPage = 1;
@@ -331,7 +345,13 @@ async function generateDeathNote() {
     const res = await apiFetch(`/tasks/death-note/generate/${encodeURIComponent(nickname)}`, { method: 'POST' });
 
     if (res.status === 409) {
-      showResult('deathnoteResult', '该用户已有任务正在运行，请等待完成后再试', 'error');
+      const errorData = await res.json();
+      const errorMsg = errorData.message || errorData.error || '冲突';
+      if (errorMsg.includes('already generated') || errorMsg.includes('incremental')) {
+        showResult('deathnoteResult', '该用户已生成过死亡笔记，请使用"增量更新"按钮', 'error');
+      } else {
+        showResult('deathnoteResult', '该用户已有任务正在运行，请等待完成后再试', 'error');
+      }
       btn.disabled = false;
       return;
     }
@@ -380,6 +400,84 @@ async function generateDeathNote() {
         } else if (task.status === 'cancelled') {
           clearInterval(pollInterval);
           btn.disabled = false;
+        }
+      } catch (err) {
+        clearInterval(pollInterval);
+        btn.disabled = false;
+        showResult('deathnoteResult', '查询状态失败: ' + err.message, 'error');
+      }
+    }, 1000);
+  } catch (err) {
+    btn.disabled = false;
+    showResult('deathnoteResult', '请求失败: ' + err.message, 'error');
+  }
+}
+
+async function incrementalUpdateDeathNote() {
+  const nickname = document.getElementById('deathnoteNickname').value.trim();
+  if (!nickname) {
+    showResult('deathnoteResult', '请输入玩家昵称', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btnIncremental');
+  btn.disabled = true;
+  showResult('deathnoteResult', '正在创建增量更新任务...', 'info');
+
+  try {
+    const res = await apiFetch(`/tasks/death-note/incremental/${encodeURIComponent(nickname)}`, { method: 'POST' });
+
+    if (res.status === 409) {
+      showResult('deathnoteResult', '该用户已有任务正在运行，请等待完成后再试', 'error');
+      btn.disabled = false;
+      return;
+    }
+
+    const data = await res.json();
+
+    if (!data.success) {
+      showResult('deathnoteResult', '创建任务失败: ' + (data.message || '未知错误'), 'error');
+      btn.disabled = false;
+      return;
+    }
+
+    const taskId = data.taskId;
+    activeTaskId = taskId;
+    showResult('deathnoteResult', '任务已创建，正在增量更新...', 'info');
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const statusRes = await apiFetch(`/tasks/${taskId}`);
+        const statusData = await statusRes.json();
+
+        if (!statusData.success || !statusData.task) {
+          clearInterval(pollInterval);
+          btn.disabled = false;
+          return;
+        }
+
+        const task = statusData.task;
+        if (activeTaskId !== taskId) {
+          clearInterval(pollInterval);
+          return;
+        }
+
+        if (task.status === 'completed') {
+          clearInterval(pollInterval);
+          btn.disabled = false;
+          const result = task.result || {};
+          showResult('deathnoteResult',
+            `增量更新完成！用户: ${result.nickname}, 新增比赛数: ${result.totalMatches}, 处理: ${result.processedMatches}`,
+            'success');
+          loadTaskList();
+        } else if (task.status === 'failed') {
+          clearInterval(pollInterval);
+          btn.disabled = false;
+          showResult('deathnoteResult', '增量更新失败: ' + (task.result?.message || '未知错误'), 'error');
+        } else if (task.status === 'cancelled') {
+          clearInterval(pollInterval);
+          btn.disabled = false;
+          showResult('deathnoteResult', '任务已取消', 'error');
         }
       } catch (err) {
         clearInterval(pollInterval);
@@ -484,8 +582,8 @@ async function loadDeathNoteList() {
             <th>最近任务</th>
             <th>进度</th>
             <th>每日增量</th>
-            <th>请求时间</th>
-            <th>完成时间</th>
+            <th>首次请求时间</th>
+            <th>上次更新/生成时间</th>
           </tr>
         </thead>
         <tbody>
@@ -499,9 +597,9 @@ async function loadDeathNoteList() {
 
       html += `
         <tr>
-          <td class="nickname-cell">${note.nickname}</td>
+          <td class="nickname-cell"><a href="/n/${encodeURIComponent(note.nickname)}" target="_blank" class="nickname-link">${note.nickname}</a></td>
           <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-          <td>${note.latestTaskType || '-'}</td>
+          <td>${formatTaskType(note.latestTaskType)}</td>
           <td>
             <div class="mini-progress">
               <div class="mini-progress-bar" style="width: ${note.latestTaskProgress}%"></div>
@@ -509,8 +607,8 @@ async function loadDeathNoteList() {
             </div>
           </td>
           <td><span class="incremental-badge ${incrementalClass}">${incrementalText}</span></td>
-          <td>${formatDate(note.requestTime)}</td>
-          <td>${note.actualEndTime ? formatDate(note.actualEndTime) : '-'}</td>
+          <td>${formatDate(note.firstRequestTime)}</td>
+          <td>${note.lastUpdateTime ? formatDate(note.lastUpdateTime) : '-'}</td>
         </tr>
       `;
     }

@@ -4,7 +4,9 @@
 
 ## 项目亮点
 
-**不只是查询击杀记录，还能反向验证：** 支持在已有死亡笔记记录中，查询某个玩家是否曾被击杀过。输入对方昵称，一键查看你被击杀的时间、对局和详细经过。
+- **你的 PUBG 死亡笔记**：自动记录每一场对局中的每一次击杀，生成专属"死亡笔记"，让对手无处遁形
+- **反向验证，以彼之道还施彼身**：不仅能查自己击杀了谁，还能查谁击杀过你——输入对方昵称，一键还原对局真相
+- **一键分享，社交利器**：专属链接 `/n/你的昵称`，分享给好友随时查看，让战绩成为你的名片
 
 ## 客户端界面
 
@@ -15,9 +17,9 @@
 - **死亡笔记生成**：自动拉取并解析 PUBG 玩家对局数据，生成完整的击杀记录汇总
 - **每日增量更新**：支持断点续传，每天自动补充新对局数据
 - **反向击杀查询**：在已有记录中查询自己是否被某个玩家击杀过
-- **专属分享链接**：每个玩家拥有专属链接，一键复制分享给好友，随时查看自己的死亡笔记
+- **专属分享链接**：每个玩家拥有专属链接 `/n/玩家昵称`，一键复制分享给好友，随时查看自己的死亡笔记
 - **日历视图**：按日期浏览击杀记录，快速定位特定对局
-- **管理后台**：任务管理、数据同步、死亡笔记生成与列表查看
+- **管理后台**：任务管理、数据同步、死亡笔记生成/增量更新/列表查看
 
 ## 环境要求
 
@@ -70,19 +72,29 @@ docker compose logs -f
 ```
 ├── src/
 │   ├── main.ts                     # 应用入口
-│   ├── common/                     # 共享工具
+│   ├── app.module.ts               # 根模块
+│   ├── common/                     # 共享工具（守卫、验证器、日志）
 │   ├── config/                     # 环境变量验证
 │   ├── constants.ts                # 全局常量
 │   ├── death-note/                 # 客户端模块（查询、展示）
 │   ├── prisma/                     # 数据库模块
-│   ├── pubg/                       # 管理模块（API 调用、数据解析）
-│   ├── scheduled-task/             # 定时任务
+│   ├── pubg/                       # PUBG 模块（API 调用、数据解析、任务管理）
+│   │   ├── pubg-match.service.ts   # 比赛数据同步与遥测重解析
+│   │   ├── pubg-death-note.service.ts  # 死亡笔记生成与增量更新
+│   │   ├── pubg-user.service.ts    # 玩家查询
+│   │   └── pubg-task.controller.ts # 管理后台任务接口
+│   ├── scheduled-task/             # 定时任务（每日增量更新）
 │   └── task/                       # 任务状态管理
+│       ├── task.service.ts         # 任务 CRUD 与执行
+│       └── task.decorator.ts       # @ExecutableTask 装饰器
 ├── public/                         # 静态前端资源
 │   ├── index.html                  # 客户端页面
 │   ├── css/style.css
 │   ├── js/app.js
 │   └── admin/                      # 管理后台
+│       ├── index.html
+│       ├── css/style.css
+│       └── js/app.js
 ├── prisma/
 │   ├── schema.prisma               # 数据库模型
 │   └── migrations/                 # 数据库迁移
@@ -91,37 +103,6 @@ docker compose logs -f
 ├── .env.example
 └── clean.sh                        # 清理脚本
 ```
-
-## API 接口
-
-### 死亡笔记（客户端）
-
-| 接口 | 说明 |
-|------|------|
-| `GET /api/v1/death-note/nickname/:nickname` | 获取用户死亡笔记状态 |
-| `GET /api/v1/death-note/nickname/:nickname/matches?page=1&pageSize=10` | 分页获取死亡笔记（按天分组） |
-| `GET /api/v1/death-note/nickname/:nickname/victim/:victimNickname` | **查询受害者被击杀记录** |
-| `GET /api/v1/death-note/i18n/game-data` | 获取游戏数据翻译对照表 |
-
-> 注：死亡笔记生成功能已移至管理后台，客户端不再提供生成接口。
-
-### 对局管理
-
-| 接口 | 说明 |
-|------|------|
-| `GET /api/v1/pubg/match/:matchId` | 获取对局详情 |
-| `GET /api/v1/pubg/user/:nickname` | 搜索玩家 |
-
-### 任务管理（管理后台）
-
-| 接口 | 说明 |
-|------|------|
-| `GET /api/v1/pubg/tasks/list` | 获取任务列表 |
-| `GET /api/v1/pubg/tasks/:taskId` | 获取任务状态 |
-| `POST /api/v1/pubg/tasks/sync-local-matches` | 同步本地比赛数据 |
-| `POST /api/v1/pubg/tasks/death-note/generate/:nickname` | 生成死亡笔记 |
-| `POST /api/v1/pubg/tasks/death-note/force-generate/:nickname` | 强制重新生成死亡笔记 |
-| `GET /api/v1/pubg/tasks/death-note/list` | 获取所有死亡笔记列表 |
 
 ## 环境变量
 
@@ -141,8 +122,6 @@ docker compose logs -f
 ## 常用命令
 
 ```bash
-# 清理项目（编译产物、依赖、数据库、日志、游戏数据）
-./clean.sh
 
 # 重新安装依赖
 npm install
@@ -159,4 +138,4 @@ npm run start:prod
 
 ## 许可证
 
-UNLICENSED
+MIT

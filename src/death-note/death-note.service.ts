@@ -3,17 +3,11 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PubgUserService } from '../pubg/pubg-user.service';
 import { PubgDeathNoteService } from '../pubg/pubg-death-note.service';
-import { PubgSeasonService } from '../pubg/pubg-season.service';
-import { TaskService } from '../task/task.service';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { DEATH_NOTE } from '../constants';
 import { cache } from '../common/cache.utils';
 import {
   UserInfo,
-  DeathNoteStatusResponse,
-  DeathNoteGenerationRequestResponse,
-  DeathNoteDataResponse,
-  SeasonRefreshResponse,
   VictimKillHistoryResponse,
   DeathNotePaginatedResponse,
   MatchGroup,
@@ -23,15 +17,12 @@ import {
 @Injectable()
 export class DeathNoteService {
   private readonly USER_UPDATE_INTERVAL = 24 * 60 * 60 * 1000;
-  private readonly DEATH_NOTE_TASK_TYPES = ['death_note_generate', 'death_note_force_generate'];
   private readonly CACHE_TTL = DEATH_NOTE.CACHE_TTL_SECONDS;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly pubgUserService: PubgUserService,
     private readonly pubgDeathNoteService: PubgDeathNoteService,
-    private readonly pubgSeasonService: PubgSeasonService,
-    private readonly taskService: TaskService,
     private readonly logger: DualOutputLoggerService,
   ) {}
 
@@ -106,254 +97,6 @@ export class DeathNoteService {
   }
 
   /**
-   * 查询死亡笔记生成状态（优先查询 DeathNoteGeneration，Task 作为辅助）
-   */
-  async getDeathNoteGenerationStatus(nickname: string): Promise<DeathNoteStatusResponse> {
-    try {
-      const userInfo = await this.resolveUserInfo(nickname);
-      
-      const generation = await this.prisma.deathNoteGeneration.findUnique({
-        where: { userId: userInfo.id },
-      });
-      
-      const latestTask = await this.taskService.getLatestTaskByUserId(
-        userInfo.id,
-        this.DEATH_NOTE_TASK_TYPES,
-      );
-      
-      if (!generation) {
-        return {
-          isGenerated: false,
-          status: 'not_requested',
-          message: 'Death note generation not requested yet',
-          taskId: latestTask?.id || null,
-          userId: userInfo.id,
-          nickname: userInfo.name,
-        };
-      }
-      
-      if (generation.isGenerated) {
-        return {
-          isGenerated: true,
-          status: 'completed',
-          message: 'Death note generation completed',
-          taskId: latestTask?.id || null,
-          progress: 100,
-          requestTime: generation.requestTime,
-          actualEndTime: generation.actualEndTime,
-          firstGenerationDuration: generation.firstGenerationDuration,
-          userId: userInfo.id,
-          nickname: userInfo.name,
-        };
-      }
-      
-      // 检查心跳超时
-      const HEARTBEAT_TIMEOUT = DEATH_NOTE.HEARTBEAT_TIMEOUT_MS;
-      if (latestTask?.status === 'running') {
-        const lastHeartbeat = latestTask.heartbeat || latestTask.startedAt;
-        if (lastHeartbeat && Date.now() - new Date(lastHeartbeat).getTime() > HEARTBEAT_TIMEOUT) {
-          return {
-            isGenerated: false,
-            status: 'timeout',
-            message: 'Task interrupted, please retry',
-            taskId: latestTask.id || null,
-            progress: latestTask.progress || 0,
-            requestTime: generation.requestTime,
-            userId: userInfo.id,
-            nickname: userInfo.name,
-          };
-        }
-      }
-      
-      return {
-        isGenerated: false,
-        status: latestTask?.status || 'generating',
-        message: 'Death note generation in progress',
-        taskId: latestTask?.id || null,
-        progress: latestTask?.progress || 0,
-        requestTime: generation.requestTime,
-        startedAt: latestTask?.startedAt || null,
-        estimatedEndTime: generation.estimatedEndTime,
-        userId: userInfo.id,
-        nickname: userInfo.name,
-      };
-    } catch (error) {
-      this.logger.error(`Error getting death note generation status:`, error);
-      return {
-        isGenerated: false,
-        status: 'error',
-        error: error.message || 'Internal server error',
-        taskId: null,
-      };
-    }
-  }
-
-  /**
-   * 请求生成死亡笔记（增量或首次）
-   */
-  async requestDeathNoteGeneration(nickname: string): Promise<DeathNoteGenerationRequestResponse> {
-    try {
-      const userInfo = await this.resolveUserInfo(nickname);
-      
-      const existingGeneration = await this.prisma.deathNoteGeneration.findUnique({
-        where: { userId: userInfo.id },
-      });
-      
-      const isIncremental = existingGeneration?.isGenerated || false;
-      
-      const taskId = await this.taskService.createAndExecuteTask(
-        'death_note_generate',
-        async (taskId: string) => {
-          const result = await this.pubgDeathNoteService.requestDeathNoteGenerationByUserId(userInfo.id, taskId);
-          
-          return {
-            success: true,
-            message: isIncremental ? 'Death note incremental update completed' : 'Death note generation completed',
-            isIncremental,
-            ...result,
-            userId: userInfo.id,
-            nickname: userInfo.name,
-          };
-        },
-        userInfo.id,
-      );
-      
-      return {
-        taskId,
-        userId: userInfo.id,
-        nickname: userInfo.name,
-        isIncremental,
-        message: isIncremental ? 'Death note incremental update started' : 'Death note generation started',
-      };
-    } catch (error) {
-      this.logger.error(`Error requesting death note generation for ${nickname}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * 强制重新生成死亡笔记（清除旧数据后完全重建）
-   */
-  async forceDeathNoteGeneration(nickname: string): Promise<DeathNoteGenerationRequestResponse> {
-    try {
-      const userInfo = await this.resolveUserInfo(nickname);
-      
-      const taskId = await this.taskService.createAndExecuteTask(
-        'death_note_force_generate',
-        async (taskId: string) => {
-          const result = await this.pubgDeathNoteService.forceGenerateDeathNote(userInfo.id, taskId);
-          
-          return {
-            success: true,
-            message: 'Force death note generation completed',
-            ...result,
-            userId: userInfo.id,
-            nickname: userInfo.name,
-          };
-        },
-        userInfo.id,
-      );
-      
-      return {
-        taskId,
-        userId: userInfo.id,
-        nickname: userInfo.name,
-        message: 'Force death note generation started',
-      };
-    } catch (error) {
-      this.logger.error(`Error force generating death note for ${nickname}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * 获取死亡笔记数据（支持生成中状态）
-   */
-  async getDeathNoteByNickname(nickname: string): Promise<DeathNoteDataResponse> {
-    try {
-      const userInfo = await this.resolveUserInfo(nickname);
-      
-      const generation = await this.prisma.deathNoteGeneration.findUnique({
-        where: { userId: userInfo.id },
-      });
-      
-      if (!generation) {
-        throw new Error(`Death note generation not requested for user ${userInfo.id}`);
-      }
-      
-      if (!generation.isGenerated) {
-        const latestTask = await this.taskService.getLatestTaskByUserId(
-          userInfo.id,
-          this.DEATH_NOTE_TASK_TYPES,
-        );
-        
-        return {
-          isGenerated: false,
-          status: 'generating',
-          message: 'Death note generation in progress, please try again later',
-          progress: latestTask?.progress || 0,
-          taskId: latestTask?.id || null,
-          userId: userInfo.id,
-          nickname: userInfo.name,
-        };
-      }
-      
-      const deathNoteData = await this.pubgDeathNoteService.getDeathNoteData(userInfo.id);
-      
-      const formattedKillEvents = deathNoteData.killEvents.map(event => ({
-        matchTime: event.match?.playedAt,
-        mapName: event.match?.mapName,
-        gameMode: event.match?.gameMode,
-        victimName: event.victimName,
-      }));
-      
-      return {
-        userId: deathNoteData.userId,
-        nickname: deathNoteData.nickname,
-        totalKills: deathNoteData.totalKills,
-        totalDeaths: deathNoteData.totalDeaths,
-        killEvents: formattedKillEvents,
-        lastUpdated: deathNoteData.lastUpdated,
-        isGenerated: true,
-        status: 'completed',
-        userInfo,
-      };
-    } catch (error) {
-      this.logger.error(`Error getting death note by nickname:`, error);
-      return {
-        error: error.message || 'Internal server error',
-      };
-    }
-  }
-
-  /**
-   * 手动刷新赛季信息
-   */
-  async refreshSeasons(): Promise<SeasonRefreshResponse> {
-    try {
-      this.logger.log('Manual season refresh requested');
-      const seasons = await this.pubgSeasonService.getAllSeasons(true);
-      
-      return {
-        success: true,
-        message: 'Seasons refreshed successfully',
-        seasons: seasons.map(s => ({
-          id: s.id,
-          isCurrent: s.isCurrent,
-          startDate: s.startDate,
-          endDate: s.endDate,
-        })),
-      };
-    } catch (error) {
-      this.logger.error(`Error refreshing seasons:`, error);
-      return {
-        success: false,
-        error: error.message || 'Internal server error',
-      };
-    }
-  }
-
-  /**
    * 查询当前用户是否击杀过指定昵称的玩家，返回击杀详情
    * 仅查询本地 killEvent 表，不调用 PUBG API，避免限速率问题
    */
@@ -361,41 +104,56 @@ export class DeathNoteService {
     const cachedKiller = await this.prisma.user.findFirst({
       where: { nickname },
     });
-    
-    const whereClause: any = {};
-    
-    if (cachedKiller) {
-      whereClause.killerId = cachedKiller.pubgId;
-    } else {
-      whereClause.killerName = nickname;
-    }
-    
+
     const cachedVictim = await this.prisma.user.findFirst({
       where: { nickname: victimNickname },
     });
-    
-    if (cachedVictim) {
-      whereClause.victimId = cachedVictim.pubgId;
+
+    // 查询 nickname 击杀 victimNickname 的记录
+    const killerWhereClause: any = {};
+    if (cachedKiller) {
+      killerWhereClause.killerId = cachedKiller.pubgId;
     } else {
-      whereClause.victimName = victimNickname;
+      killerWhereClause.killerName = nickname;
     }
-    
-    const killEvents = await this.prisma.killEvent.findMany({
-      where: whereClause,
-      include: {
-        match: {
-          select: {
-            playedAt: true,
-            mapName: true,
-            gameMode: true,
-          }
-        }
-      },
-      orderBy: {
-        timestamp: 'desc'
-      }
-    });
-    
+    if (cachedVictim) {
+      killerWhereClause.victimId = cachedVictim.pubgId;
+    } else {
+      killerWhereClause.victimName = victimNickname;
+    }
+
+    // 查询 victimNickname 击杀 nickname 的记录（反向）
+    const victimWhereClause: any = {};
+    if (cachedVictim) {
+      victimWhereClause.killerId = cachedVictim.pubgId;
+    } else {
+      victimWhereClause.killerName = victimNickname;
+    }
+    if (cachedKiller) {
+      victimWhereClause.victimId = cachedKiller.pubgId;
+    } else {
+      victimWhereClause.victimName = nickname;
+    }
+
+    const [killEvents, deathEvents] = await Promise.all([
+      this.prisma.killEvent.findMany({
+        where: killerWhereClause,
+        include: {
+          match: {
+            select: {
+              playedAt: true,
+              mapName: true,
+              gameMode: true,
+            },
+          },
+        },
+        orderBy: { timestamp: 'desc' },
+      }),
+      this.prisma.killEvent.findMany({
+        where: victimWhereClause,
+      }),
+    ]);
+
     const killDetails = killEvents.map(event => ({
       matchId: event.matchId,
       matchTime: event.match?.playedAt,
@@ -406,14 +164,14 @@ export class DeathNoteService {
       isHeadshot: event.isHeadshot,
       timestamp: event.timestamp,
     }));
-    
+
     return {
       userId: cachedKiller?.pubgId || 'unknown',
       nickname: cachedKiller?.nickname || nickname,
       victimId: cachedVictim?.pubgId || 'unknown',
       victimNickname: cachedVictim?.nickname || victimNickname,
       totalKills: killEvents.length,
-      totalDeaths: 0,
+      totalDeaths: deathEvents.length,
       killDetails,
     };
   }
@@ -426,42 +184,57 @@ export class DeathNoteService {
     const cachedVictim = await this.prisma.user.findFirst({
       where: { nickname },
     });
-    
-    const whereClause: any = {};
-    
-    if (cachedVictim) {
-      whereClause.victimId = cachedVictim.pubgId;
-    } else {
-      whereClause.victimName = nickname;
-    }
-    
+
     const cachedKiller = await this.prisma.user.findFirst({
       where: { nickname: killerNickname },
     });
-    
-    if (cachedKiller) {
-      whereClause.killerId = cachedKiller.pubgId;
+
+    // 查询 killerNickname 击杀 nickname 的记录
+    const victimWhereClause: any = {};
+    if (cachedVictim) {
+      victimWhereClause.victimId = cachedVictim.pubgId;
     } else {
-      whereClause.killerName = killerNickname;
+      victimWhereClause.victimName = nickname;
     }
-    
-    const killEvents = await this.prisma.killEvent.findMany({
-      where: whereClause,
-      include: {
-        match: {
-          select: {
-            playedAt: true,
-            mapName: true,
-            gameMode: true,
-          }
-        }
-      },
-      orderBy: {
-        timestamp: 'desc'
-      }
-    });
-    
-    const killDetails = killEvents.map(event => ({
+    if (cachedKiller) {
+      victimWhereClause.killerId = cachedKiller.pubgId;
+    } else {
+      victimWhereClause.killerName = killerNickname;
+    }
+
+    // 查询 nickname 击杀 killerNickname 的记录（反向）
+    const killerWhereClause: any = {};
+    if (cachedVictim) {
+      killerWhereClause.killerId = cachedVictim.pubgId;
+    } else {
+      killerWhereClause.killerName = nickname;
+    }
+    if (cachedKiller) {
+      killerWhereClause.victimId = cachedKiller.pubgId;
+    } else {
+      killerWhereClause.victimName = killerNickname;
+    }
+
+    const [deathEvents, killEvents] = await Promise.all([
+      this.prisma.killEvent.findMany({
+        where: victimWhereClause,
+        include: {
+          match: {
+            select: {
+              playedAt: true,
+              mapName: true,
+              gameMode: true,
+            },
+          },
+        },
+        orderBy: { timestamp: 'desc' },
+      }),
+      this.prisma.killEvent.findMany({
+        where: killerWhereClause,
+      }),
+    ]);
+
+    const killDetails = deathEvents.map(event => ({
       matchId: event.matchId,
       matchTime: event.match?.playedAt,
       mapName: event.match?.mapName,
@@ -471,14 +244,14 @@ export class DeathNoteService {
       isHeadshot: event.isHeadshot,
       timestamp: event.timestamp,
     }));
-    
+
     return {
       userId: cachedVictim?.pubgId || 'unknown',
       nickname: cachedVictim?.nickname || nickname,
       victimId: cachedKiller?.pubgId || 'unknown',
       victimNickname: cachedKiller?.nickname || killerNickname,
-      totalKills: 0,
-      totalDeaths: killEvents.length,
+      totalKills: killEvents.length,
+      totalDeaths: deathEvents.length,
       killDetails,
     };
   }
@@ -588,6 +361,7 @@ export class DeathNoteService {
 
   /**
    * 分页查询死亡笔记数据，按天分组
+   * 数据库层面分页：先获取日期列表分页，再只查询对应日期的数据
    */
   async getDeathNotePaginated(
     nickname: string,
@@ -623,43 +397,92 @@ export class DeathNoteService {
 
     const userId = cachedUser.pubgId;
 
-    const [killEvents, totalStats] = await Promise.all([
-      this.prisma.killEvent.findMany({
-        where: {
-          OR: [
-            { killerId: userId },
-            { victimId: userId },
-          ],
-        },
-        include: {
-          match: {
-            select: {
-              playedAt: true,
-              mapName: true,
-              gameMode: true,
-            },
+    // 阶段1：获取所有有数据的日期（轻量级聚合查询）
+    const matchDates = await this.prisma.match.findMany({
+      where: {
+        killEvents: {
+          some: {
+            OR: [
+              { killerId: userId },
+              { victimId: userId },
+            ],
           },
         },
-        orderBy: { timestamp: 'desc' },
-      }),
-      this.prisma.killEvent.groupBy({
-        by: ['killerId', 'victimId'],
-        where: {
-          OR: [
-            { killerId: userId },
-            { victimId: userId },
-          ],
-        },
-        _count: true,
-      }),
-    ]);
+      },
+      select: { playedAt: true },
+      orderBy: { playedAt: 'desc' },
+      distinct: ['playedAt'],
+    });
 
-    const totalKills = totalStats.filter(s => s.killerId === userId).reduce((sum, s) => sum + s._count, 0);
-    const totalDeaths = totalStats.filter(s => s.victimId === userId).reduce((sum, s) => sum + s._count, 0);
+    // 按日期去重并排序
+    const allDates = [...new Set(
+      matchDates
+        .filter(m => m.playedAt)
+        .map(m => new Date(m.playedAt!).toISOString().split('T')[0])
+    )].sort((a, b) => b.localeCompare(a));
+
+    const totalDays = allDates.length;
+    const totalPages = Math.ceil(totalDays / pageSize);
+    const validPage = Math.max(1, Math.min(page, totalPages || 1));
+
+    // 阶段2：获取当前页对应的日期范围
+    const startIndex = (validPage - 1) * pageSize;
+    const paginatedDates = allDates.slice(startIndex, startIndex + pageSize);
+
+    if (paginatedDates.length === 0) {
+      return {
+        userId,
+        nickname: cachedUser.nickname,
+        totalMatches: 0,
+        totalKills: 0,
+        totalDeaths: 0,
+        totalDays: 0,
+        startDate: null,
+        endDate: null,
+        page: validPage,
+        pageSize,
+        totalPages,
+        days: [],
+      };
+    }
+
+    // 阶段3：只查询分页日期范围内的击杀事件
+    const startDate = paginatedDates[paginatedDates.length - 1];
+    const endDate = paginatedDates[0];
+    const startDateTime = new Date(startDate + 'T00:00:00.000Z');
+    const endDateTime = new Date(endDate + 'T23:59:59.999Z');
+
+    const killEvents = await this.prisma.killEvent.findMany({
+      where: {
+        OR: [
+          { killerId: userId },
+          { victimId: userId },
+        ],
+        match: {
+          playedAt: {
+            gte: startDateTime,
+            lte: endDateTime,
+          },
+        },
+      },
+      include: {
+        match: {
+          select: {
+            playedAt: true,
+            mapName: true,
+            gameMode: true,
+          },
+        },
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+
+    const totalKills = killEvents.filter(e => e.killerId === userId).length;
+    const totalDeaths = killEvents.filter(e => e.victimId === userId).length;
 
     const matchMap = this.groupEventsByMatch(killEvents, userId);
 
-    const allMatches = Array.from(matchMap.values())
+    const pageMatches = Array.from(matchMap.values())
       .filter(match => match.kills > 0 || match.deaths > 0)
       .sort((a, b) => {
         const timeA = a.matchTime?.getTime() || 0;
@@ -667,30 +490,26 @@ export class DeathNoteService {
         return timeB - timeA;
       });
 
-    const allDays = this.groupMatchesByDay(allMatches);
+    const pageDays = this.groupMatchesByDay(pageMatches);
 
-    const totalMatches = allMatches.length;
-    const totalDays = allDays.length;
-    const totalPages = Math.ceil(totalDays / pageSize);
-    const validPage = Math.max(1, Math.min(page, totalPages || 1));
-    const startIndex = (validPage - 1) * pageSize;
-    const paginatedDays = allDays.slice(startIndex, startIndex + pageSize);
-
-    const { startDate, endDate } = this.calculateDateRange(allDays);
+    // 阶段4：获取全局统计信息（仅首次请求或缓存过期时）
+    const { startDate: globalStartDate, endDate: globalEndDate } = this.calculateDateRange(
+      allDates.map(date => ({ date, matches: [], kills: 0, deaths: 0 })),
+    );
 
     const result: DeathNotePaginatedResponse = {
       userId,
       nickname: cachedUser.nickname,
-      totalMatches,
+      totalMatches: pageMatches.length,
       totalKills,
       totalDeaths,
       totalDays,
-      startDate,
-      endDate,
+      startDate: globalStartDate,
+      endDate: globalEndDate,
       page: validPage,
       pageSize,
       totalPages,
-      days: paginatedDays,
+      days: pageDays,
     };
 
     await cache.set(cacheKey, result, this.CACHE_TTL);
@@ -700,6 +519,7 @@ export class DeathNoteService {
 
   /**
    * 按日期查询死亡笔记数据
+   * 数据库层面过滤：只查询指定日期的数据
    */
   async getDeathNoteByDate(
     nickname: string,
@@ -734,43 +554,41 @@ export class DeathNoteService {
 
     const userId = cachedUser.pubgId;
 
-    const [killEvents, totalStats] = await Promise.all([
-      this.prisma.killEvent.findMany({
-        where: {
-          OR: [
-            { killerId: userId },
-            { victimId: userId },
-          ],
-        },
-        include: {
-          match: {
-            select: {
-              playedAt: true,
-              mapName: true,
-              gameMode: true,
-            },
+    // 阶段1：只查询指定日期的击杀事件
+    const startDateTime = new Date(date + 'T00:00:00.000Z');
+    const endDateTime = new Date(date + 'T23:59:59.999Z');
+
+    const killEvents = await this.prisma.killEvent.findMany({
+      where: {
+        OR: [
+          { killerId: userId },
+          { victimId: userId },
+        ],
+        match: {
+          playedAt: {
+            gte: startDateTime,
+            lte: endDateTime,
           },
         },
-        orderBy: { timestamp: 'desc' },
-      }),
-      this.prisma.killEvent.groupBy({
-        by: ['killerId', 'victimId'],
-        where: {
-          OR: [
-            { killerId: userId },
-            { victimId: userId },
-          ],
+      },
+      include: {
+        match: {
+          select: {
+            playedAt: true,
+            mapName: true,
+            gameMode: true,
+          },
         },
-        _count: true,
-      }),
-    ]);
+      },
+      orderBy: { timestamp: 'desc' },
+    });
 
-    const totalKills = totalStats.filter(s => s.killerId === userId).reduce((sum, s) => sum + s._count, 0);
-    const totalDeaths = totalStats.filter(s => s.victimId === userId).reduce((sum, s) => sum + s._count, 0);
+    const totalKills = killEvents.filter(e => e.killerId === userId).length;
+    const totalDeaths = killEvents.filter(e => e.victimId === userId).length;
 
     const matchMap = this.groupEventsByMatch(killEvents, userId);
 
-    const allMatches = Array.from(matchMap.values())
+    const dayMatches = Array.from(matchMap.values())
       .filter(match => match.kills > 0 || match.deaths > 0)
       .sort((a, b) => {
         const timeA = a.matchTime?.getTime() || 0;
@@ -778,24 +596,49 @@ export class DeathNoteService {
         return timeB - timeA;
       });
 
-    const allDays = this.groupMatchesByDay(allMatches);
+    const dayData = dayMatches.length > 0
+      ? { date, matches: dayMatches, kills: totalKills, deaths: totalDeaths }
+      : null;
 
-    const dayData = allDays.find(d => d.date === date);
+    // 阶段2：获取全局日期范围（轻量级查询）
+    const matchDates = await this.prisma.match.findMany({
+      where: {
+        killEvents: {
+          some: {
+            OR: [
+              { killerId: userId },
+              { victimId: userId },
+            ],
+          },
+        },
+      },
+      select: { playedAt: true },
+      orderBy: { playedAt: 'desc' },
+      distinct: ['playedAt'],
+    });
 
-    const { startDate, endDate } = this.calculateDateRange(allDays);
+    const allDates = [...new Set(
+      matchDates
+        .filter(m => m.playedAt)
+        .map(m => new Date(m.playedAt!).toISOString().split('T')[0])
+    )].sort((a, b) => b.localeCompare(a));
+
+    const { startDate, endDate } = this.calculateDateRange(
+      allDates.map(d => ({ date: d, matches: [], kills: 0, deaths: 0 })),
+    );
 
     const result: DeathNotePaginatedResponse = {
       userId,
       nickname: cachedUser.nickname,
-      totalMatches: allMatches.length,
+      totalMatches: dayMatches.length,
       totalKills,
       totalDeaths,
-      totalDays: allDays.length,
+      totalDays: allDates.length,
       startDate,
       endDate,
       page: 1,
-      pageSize: 1,
-      totalPages: allDays.length,
+      pageSize: allDates.length,
+      totalPages: 1,
       days: dayData ? [dayData] : [],
     };
 
@@ -804,10 +647,4 @@ export class DeathNoteService {
     return result;
   }
 
-  /**
-   * 清除用户死亡笔记缓存
-   */
-  async invalidateCache(nickname: string): Promise<void> {
-    await cache.invalidatePattern(`deathnote:${nickname}`);
-  }
 }

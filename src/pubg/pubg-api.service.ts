@@ -346,41 +346,6 @@ export class PubgApiService implements OnModuleInit {
     return allResults;
   }
 
-  /**
-   * 获取用户的比赛ID列表
-   * @param playerId 用户ID
-   * @returns 比赛ID列表
-   */
-  async getPlayerMatches(playerId: string): Promise<string[]> {
-    const region = this.configService.get<string>('PUBG_API_REGION', 'steam');
-    const timeout = this.configService.get<number>('PUBG_API_TIMEOUT', 30000);
-    const retryCount = this.configService.get<number>('PUBG_API_RETRY_COUNT', 3);
-
-    const userUrl = `https://api.pubg.com/shards/${region}/players/${playerId}`;
-    
-    this.logger.log(`Fetching match history for player ${playerId} from ${userUrl}`);
-
-    const response = await this.makeApiRequest<any>(userUrl, {
-      headers: { Accept: 'application/vnd.api+json' },
-      timeout,
-    }, retryCount);
-
-    const user = response.data.data;
-    const matchesData = user.relationships?.matches?.data;
-    
-    this.logger.log(`Player ${playerId} - response data structure: ${user ? 'user found' : 'no user'}, relationships: ${user?.relationships ? 'exists' : 'null'}, matches data: ${matchesData ? matchesData.length + ' items' : 'null'}`);
-    
-    if (!matchesData || !Array.isArray(matchesData)) {
-      this.logger.warn(`No matches found for player ${playerId}`);
-      return [];
-    }
-
-    const matchIds = matchesData.map((match: any) => match.id);
-    this.logger.log(`Returning ${matchIds.length} match IDs for player ${playerId}`);
-    
-    return matchIds;
-  }
-
   async getAllSeasons(): Promise<PubgSeason[]> {
     const region = this.configService.get<string>('PUBG_API_REGION', 'steam');
     const timeout = this.configService.get<number>('PUBG_API_TIMEOUT', 30000);

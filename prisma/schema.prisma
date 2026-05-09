@@ -108,12 +108,7 @@ model Season {
 model DeathNoteGeneration {
   id             Int      @id @default(autoincrement())
   userId         String
-  requestTime    DateTime @default(now())
   isGenerated    Boolean  @default(false)
-  estimatedEndTime DateTime?
-  actualEndTime  DateTime?
-  firstGenerationDuration Int? // 首次生成耗时（毫秒），用于预估后续增量更新时间
-  lastIncrementalTime DateTime? // 最后一次增量更新时间
   dailyIncrementalEnabled Boolean @default(true) // 是否启用每日增量
   
   createdAt      DateTime @default(now())

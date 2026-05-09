@@ -73,25 +73,14 @@ export class ScheduledTaskService implements OnModuleInit {
 
       for (const { userId } of users) {
         try {
-          const hasRunning = await this.taskService.hasRunningTask(userId);
+          const hasRunning = await this.taskService.getRunningTask(userId);
           if (hasRunning) {
             this.logger.log(`User ${userId} has running task, skipping`);
             skipCount++;
             continue;
           }
 
-          await this.taskService.createAndExecuteTask(
-            'death_note_daily_incremental',
-            async (taskId: string): Promise<TaskResult> => {
-              const result = await this.pubgDeathNoteService.incrementalUpdate(userId, taskId);
-              return {
-                success: true,
-                message: 'Daily incremental update completed',
-                ...result,
-              };
-            },
-            userId,
-          );
+          await (this.pubgDeathNoteService as any).incrementalUpdate(userId);
 
           successCount++;
         } catch (error) {

@@ -6,25 +6,26 @@ import { DeathNoteModule } from './death-note/death-note.module';
 import { PubgModule } from './pubg/pubg.module';
 import { LoggerModule } from './common/logger.module';
 import { ScheduledTaskModule } from './scheduled-task/scheduled-task.module';
+import { TaskModule } from './task/task.module';
+import { AppBootstrapService } from './common/app-bootstrap.service';
 
 @Module({
   imports: [
-    // 注册 ConfigModule 并启用 Joi 校验
     ConfigModule.forRoot({
-      isGlobal: true, // 全局可用，无需在每个 Module 导入
-      validationSchema: envSchema, // 挂载 Joi Schema
+      isGlobal: true,
+      validationSchema: envSchema,
       validationOptions: {
-        allowUnknown: true, // 允许 .env 中存在 Schema 未定义的变量
-        abortEarly: true, // 遇到第一个错误就停止
+        allowUnknown: true,
+        abortEarly: true,
       },
     }),
-    // 2. 数据库模块 (Global)
     PrismaModule,
-    // 3. 日志模块 (Global)
     LoggerModule,
+    TaskModule,
     DeathNoteModule,
     PubgModule,
     ScheduledTaskModule,
   ],
+  providers: [AppBootstrapService],
 })
 export class AppModule {}

@@ -2,17 +2,19 @@
 
 export interface DeathNoteGenerationResult {
   userId: string;
+  nickname?: string;
   isGenerated: boolean;
-  estimatedEndTime?: Date | null;
+  estimatedDuration?: number;
   totalMatches?: number;
   processedMatches?: number;
 }
 
 export interface DeathNoteStatusResult {
   isGenerated: boolean;
-  estimatedEndTime: Date | null;
-  actualEndTime: Date | null;
-  firstGenerationDuration: number | null;
+  createdAt: Date | null;
+  latestTaskStatus: string | null;
+  latestTaskProgress: number;
+  latestTaskType: string | null;
 }
 
 export interface DeathNoteDataResult {

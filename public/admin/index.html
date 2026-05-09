@@ -91,7 +91,8 @@
               <label>玩家昵称</label>
               <input type="text" id="deathnoteNickname" placeholder="输入 PUBG 昵称">
             </div>
-            <button class="btn btn-primary" id="btnGenerate" onclick="generateDeathNote()">生成/更新</button>
+            <button class="btn btn-primary" id="btnGenerate" onclick="generateDeathNote()">初次生成</button>
+            <button class="btn btn-success" id="btnIncremental" onclick="incrementalUpdateDeathNote()">增量更新</button>
             <button class="btn btn-danger" id="btnForceGenerate" onclick="forceGenerateDeathNote()">强制重新生成</button>
             <div id="deathnoteResult" class="result-box"></div>
           </div>

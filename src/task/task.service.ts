@@ -4,10 +4,33 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { TASK } from '../constants';
 
+export enum TaskStatus {
+  PENDING = 'pending',
+  RUNNING = 'running',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELLED = 'cancelled',
+}
+
 export interface TaskResult {
   success: boolean;
   message: string;
   [key: string]: any;
+}
+
+export interface TaskInfo {
+  id: string;
+  type: string;
+  userId: string | null;
+  status: TaskStatus;
+  progress: number;
+  heartbeat: Date | null;
+  result: any;
+  error: string | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 @Injectable()
@@ -18,120 +41,9 @@ export class TaskService {
   ) {}
 
   /**
-   * 创建新任务
-   * @param type 任务类型
-   * @param userId 关联的用户ID（可选）
-   * @returns 任务ID
+   * 将 Prisma Task 对象转换为 TaskInfo
    */
-  async createTask(type: string, userId?: string): Promise<string> {
-    const task = await this.prisma.task.create({
-      data: {
-        type,
-        userId,
-        status: 'pending',
-        progress: 0,
-      },
-    });
-
-    this.logger.log(`Created task ${task.id} with type ${type}${userId ? ` for user ${userId}` : ''}`);
-    return task.id;
-  }
-
-  /**
-   * 更新任务状态
-   * @param taskId 任务ID
-   * @param status 状态
-   * @param progress 进度
-   */
-  async updateTaskStatus(
-    taskId: string,
-    status: string,
-    progress?: number,
-  ): Promise<void> {
-    if (await this.isTaskCancelled(taskId)) return;
-
-    const updateData: any = { status };
-    if (progress !== undefined) {
-      updateData.progress = progress;
-    }
-
-    if (status === 'running' && !updateData.startedAt) {
-      updateData.startedAt = new Date();
-    }
-
-    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
-      updateData.completedAt = new Date();
-    }
-
-    await this.prisma.task.update({
-      where: { id: taskId },
-      data: updateData,
-    });
-  }
-
-  /**
-   * 更新任务心跳
-   * @param taskId 任务ID
-   * @param progress 进度（可选）
-   */
-  async updateHeartbeat(taskId: string, progress?: number): Promise<void> {
-    if (await this.isTaskCancelled(taskId)) return;
-
-    const updateData: any = { heartbeat: new Date() };
-    if (progress !== undefined) {
-      updateData.progress = progress;
-    }
-
-    await this.prisma.task.update({
-      where: { id: taskId },
-      data: updateData,
-    });
-  }
-
-  /**
-   * 检查用户是否有正在运行的任务
-   * @param userId 用户ID
-   * @returns 是否有运行中的任务
-   */
-  async hasRunningTask(userId: string): Promise<boolean> {
-    const count = await this.prisma.task.count({
-      where: {
-        userId,
-        status: 'running',
-      },
-    });
-    return count > 0;
-  }
-
-  /**
-   * 获取全局正在运行的任务数量
-   * @returns 运行中的任务数量
-   */
-  async getRunningTaskCount(): Promise<number> {
-    return this.prisma.task.count({
-      where: {
-        status: 'running',
-      },
-    });
-  }
-
-  /**
-   * 获取用户正在运行的任务
-   * @param userId 用户ID
-   * @returns 运行中的任务信息
-   */
-  async getRunningTask(userId: string) {
-    const task = await this.prisma.task.findFirst({
-      where: {
-        userId,
-        status: 'running',
-      },
-    });
-
-    if (!task) {
-      return null;
-    }
-
+  private mapTaskToInfo(task: any): TaskInfo {
     return {
       id: task.id,
       type: task.type,
@@ -149,6 +61,149 @@ export class TaskService {
   }
 
   /**
+   * 创建新任务
+   * @param type 任务类型
+   * @param userId 关联的用户ID（可选）
+   * @returns 任务ID
+   */
+  async createTask(type: string, userId?: string): Promise<string> {
+    const task = await this.prisma.task.create({
+      data: {
+        type,
+        userId,
+        status: TaskStatus.PENDING,
+        progress: 0,
+      },
+    });
+
+    this.logger.log(`Created task ${task.id} with type ${type}${userId ? ` for user ${userId}` : ''}`);
+    return task.id;
+  }
+
+  /**
+   * 更新任务状态
+   * @param taskId 任务ID
+   * @param status 状态
+   * @param progress 进度（可选）
+   * @param error 错误信息（可选，当状态为 FAILED 时）
+   */
+  async updateTaskStatus(
+    taskId: string,
+    status: TaskStatus,
+    progress?: number,
+    error?: string,
+  ): Promise<void> {
+    if (await this.isTaskCancelled(taskId)) return;
+
+    const updateData: any = { status };
+    if (progress !== undefined) {
+      updateData.progress = progress;
+    }
+    if (error) {
+      updateData.error = error;
+    }
+
+    if (status === TaskStatus.RUNNING && !updateData.startedAt) {
+      updateData.startedAt = new Date();
+    }
+
+    if (status === TaskStatus.COMPLETED || status === TaskStatus.FAILED || status === TaskStatus.CANCELLED) {
+      updateData.completedAt = new Date();
+    }
+
+    await this.prisma.task.update({
+      where: { id: taskId },
+      data: updateData,
+    });
+  }
+
+  /**
+   * 设置任务为待执行
+   * @param taskId 任务ID
+   */
+  async setTaskPending(taskId: string): Promise<void> {
+    await this.updateTaskStatus(taskId, TaskStatus.PENDING);
+  }
+
+  /**
+   * 设置任务为运行中
+   * @param taskId 任务ID
+   * @param progress 进度（可选）
+   */
+  async setTaskRunning(taskId: string, progress?: number): Promise<void> {
+    await this.updateTaskStatus(taskId, TaskStatus.RUNNING, progress);
+  }
+
+  /**
+   * 设置任务为已完成
+   * @param taskId 任务ID
+   * @param progress 进度（可选）
+   */
+  async setTaskCompleted(taskId: string, progress?: number): Promise<void> {
+    await this.updateTaskStatus(taskId, TaskStatus.COMPLETED, progress);
+  }
+
+  /**
+   * 设置任务为失败
+   * @param taskId 任务ID
+   * @param error 错误信息
+   */
+  async setTaskFailed(taskId: string, error?: string): Promise<void> {
+    await this.updateTaskStatus(taskId, TaskStatus.FAILED, undefined, error);
+  }
+
+  /**
+   * 设置任务为已取消
+   * @param taskId 任务ID
+   */
+  async setTaskCancelled(taskId: string): Promise<void> {
+    await this.updateTaskStatus(taskId, TaskStatus.CANCELLED);
+  }
+
+  /**
+   * 更新任务进度
+   * @param taskId 任务ID
+   * @param progress 进度值
+   */
+  async updateProgress(taskId: string, progress: number): Promise<void> {
+    if (await this.isTaskCancelled(taskId)) return;
+
+    await this.prisma.task.update({
+      where: { id: taskId },
+      data: { progress },
+    });
+  }
+
+  /**
+   * 更新任务心跳
+   * @param taskId 任务ID
+   */
+  async updateHeartbeat(taskId: string): Promise<void> {
+    if (await this.isTaskCancelled(taskId)) return;
+
+    await this.prisma.task.update({
+      where: { id: taskId },
+      data: { heartbeat: new Date() },
+    });
+  }
+
+  /**
+   * 获取用户正在运行的任务
+   * @param userId 用户ID
+   * @returns 运行中的任务信息
+   */
+  async getRunningTask(userId: string): Promise<TaskInfo | null> {
+    const task = await this.prisma.task.findFirst({
+      where: {
+        userId,
+        status: TaskStatus.RUNNING,
+      },
+    });
+
+    return task ? this.mapTaskToInfo(task) : null;
+  }
+
+  /**
    * 取消用户所有正在运行的任务
    * @param userId 用户ID
    * @returns 取消的任务数量
@@ -157,10 +212,10 @@ export class TaskService {
     const result = await this.prisma.task.updateMany({
       where: {
         userId,
-        status: 'running',
+        status: TaskStatus.RUNNING,
       },
       data: {
-        status: 'cancelled',
+        status: TaskStatus.CANCELLED,
         completedAt: new Date(),
       },
     });
@@ -172,12 +227,12 @@ export class TaskService {
    * @param taskId 任务ID
    * @returns 任务状态
    */
-  private async getTaskStatus(taskId: string): Promise<string | null> {
+  private async getTaskStatus(taskId: string): Promise<TaskStatus | null> {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
       select: { status: true },
     });
-    return task?.status ?? null;
+    return task?.status as TaskStatus | null ?? null;
   }
 
   /**
@@ -186,7 +241,7 @@ export class TaskService {
    * @returns 是否已取消
    */
   async isTaskCancelled(taskId: string): Promise<boolean> {
-    return (await this.getTaskStatus(taskId)) === 'cancelled';
+    return (await this.getTaskStatus(taskId)) === TaskStatus.CANCELLED;
   }
 
   /**
@@ -199,7 +254,7 @@ export class TaskService {
 
     const staleTasks = await this.prisma.task.findMany({
       where: {
-        status: 'running',
+        status: TaskStatus.RUNNING,
         OR: [
           { heartbeat: { lt: threshold } },
           {
@@ -218,7 +273,7 @@ export class TaskService {
           id: { in: staleTasks.map(t => t.id) },
         },
         data: {
-          status: 'failed',
+          status: TaskStatus.FAILED,
           error: 'Task heartbeat timeout, possible crash',
           completedAt: new Date(),
         },
@@ -231,65 +286,51 @@ export class TaskService {
   }
 
   /**
-   * 设置任务结果
+   * 完成任务并记录业务数据
+   * @param taskId 任务ID
+   * @param message 完成消息
+   * @param data 业务数据（JSON 格式，可包含 matchCount 等）
+   */
+  async completeTaskWithData(taskId: string, message: string, data: Record<string, any>): Promise<void> {
+    await this.setTaskResult(taskId, {
+      success: true,
+      message,
+      data,
+    });
+  }
+
+  /**
+   * 设置任务结果（成功或失败）
    * @param taskId 任务ID
    * @param result 结果数据
    */
   async setTaskResult(taskId: string, result: TaskResult): Promise<void> {
-    await this.prisma.task.update({
-      where: { id: taskId },
-      data: {
-        result: JSON.stringify(result),
-        status: result.success ? 'completed' : 'failed',
-        completedAt: new Date(),
-      },
-    });
+    if (result.success) {
+      await this.prisma.task.update({
+        where: { id: taskId },
+        data: {
+          status: TaskStatus.COMPLETED,
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify(result),
+        },
+      });
+    } else {
+      await this.setTaskFailed(taskId, result.message);
+    }
   }
 
   /**
-   * 设置任务错误
-   * @param taskId 任务ID
-   * @param error 错误信息
-   */
-  async setTaskError(taskId: string, error: string): Promise<void> {
-    await this.prisma.task.update({
-      where: { id: taskId },
-      data: {
-        error,
-        status: 'failed',
-        completedAt: new Date(),
-      },
-    });
-  }
-
-  /**
-   * 获取任务状态
+   * 获取任务详细信息
    * @param taskId 任务ID
    * @returns 任务信息
    */
-  async getTask(taskId: string) {
+  async getTask(taskId: string): Promise<TaskInfo | null> {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
     });
 
-    if (!task) {
-      return null;
-    }
-
-    return {
-      id: task.id,
-      type: task.type,
-      userId: task.userId,
-      status: task.status,
-      progress: task.progress,
-      heartbeat: task.heartbeat,
-      result: task.result ? JSON.parse(task.result) : null,
-      error: task.error,
-      startedAt: task.startedAt,
-      completedAt: task.completedAt,
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt,
-    };
+    return task ? this.mapTaskToInfo(task) : null;
   }
 
   /**
@@ -316,20 +357,7 @@ export class TaskService {
     ]);
 
     return {
-      tasks: tasks.map(task => ({
-        id: task.id,
-        type: task.type,
-        userId: task.userId,
-        status: task.status,
-        progress: task.progress,
-        heartbeat: task.heartbeat,
-        result: task.result ? JSON.parse(task.result) : null,
-        error: task.error,
-        startedAt: task.startedAt,
-        completedAt: task.completedAt,
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-      })),
+      tasks: tasks.map(task => this.mapTaskToInfo(task)),
       total,
       page,
       limit,
@@ -353,24 +381,7 @@ export class TaskService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!task) {
-      return null;
-    }
-
-    return {
-      id: task.id,
-      type: task.type,
-      userId: task.userId,
-      status: task.status,
-      progress: task.progress,
-      heartbeat: task.heartbeat,
-      result: task.result ? JSON.parse(task.result) : null,
-      error: task.error,
-      startedAt: task.startedAt,
-      completedAt: task.completedAt,
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt,
-    };
+    return task ? this.mapTaskToInfo(task) : null;
   }
 
   /**
@@ -379,7 +390,7 @@ export class TaskService {
    * @param types 任务类型列表（可选）
    * @returns 最新任务信息
    */
-  async getLatestTaskByUserId(userId: string, types?: string[]) {
+  async getLatestTaskByUserId(userId: string, types?: string[]): Promise<TaskInfo | null> {
     const where: any = { userId };
     
     if (types && types.length > 0) {
@@ -391,24 +402,7 @@ export class TaskService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!task) {
-      return null;
-    }
-
-    return {
-      id: task.id,
-      type: task.type,
-      userId: task.userId,
-      status: task.status,
-      progress: task.progress,
-      heartbeat: task.heartbeat,
-      result: task.result ? JSON.parse(task.result) : null,
-      error: task.error,
-      startedAt: task.startedAt,
-      completedAt: task.completedAt,
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt,
-    };
+    return task ? this.mapTaskToInfo(task) : null;
   }
 
   /**
@@ -417,7 +411,7 @@ export class TaskService {
    * @param types 任务类型列表（可选）
    * @returns 任务列表
    */
-  async getTasksByUserId(userId: string, types?: string[]) {
+  async getTasksByUserId(userId: string, types?: string[]): Promise<TaskInfo[]> {
     const where: any = { userId };
     
     if (types && types.length > 0) {
@@ -429,20 +423,7 @@ export class TaskService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return tasks.map(task => ({
-      id: task.id,
-      type: task.type,
-      userId: task.userId,
-      status: task.status,
-      progress: task.progress,
-      heartbeat: task.heartbeat,
-      result: task.result ? JSON.parse(task.result) : null,
-      error: task.error,
-      startedAt: task.startedAt,
-      completedAt: task.completedAt,
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt,
-    }));
+    return tasks.map(task => this.mapTaskToInfo(task));
   }
 
   /**
@@ -452,7 +433,7 @@ export class TaskService {
    */
   async executeTask(taskId: string, taskFn: (taskId: string) => Promise<TaskResult>): Promise<void> {
     try {
-      await this.updateTaskStatus(taskId, 'running', 0);
+      await this.setTaskRunning(taskId, 0);
       this.logger.log(`Task ${taskId} started`);
 
       const result = await taskFn(taskId);
@@ -471,7 +452,7 @@ export class TaskService {
       }
 
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await this.setTaskError(taskId, errorMessage);
+      await this.setTaskFailed(taskId, errorMessage);
       this.logger.error(`Task ${taskId} failed: ${errorMessage}`);
     }
   }

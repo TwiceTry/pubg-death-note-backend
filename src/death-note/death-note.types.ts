@@ -11,11 +11,8 @@ export interface DeathNoteStatusResponse {
   message?: string;
   taskId: string | null;
   progress?: number;
-  requestTime?: Date;
-  actualEndTime?: Date | null;
+  createdAt?: Date;
   startedAt?: Date | null;
-  estimatedEndTime?: Date | null;
-  firstGenerationDuration?: number | null;
   userId?: string;
   nickname?: string;
   error?: string;
