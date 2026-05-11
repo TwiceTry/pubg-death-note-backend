@@ -361,6 +361,7 @@ function renderDays(days, title) {
       }
 
       var matchId = 'match-' + day.date + '-' + idx;
+      var chickenDinnerBadge = match.ranking === 1 ? '<span class="chicken-dinner-badge">🍗 吃鸡</span>' : '';
 
       return '<div class="match-card">' +
         '<div class="match-header" onclick="toggleMatch(\'' + matchId + '\')">' +
@@ -368,6 +369,7 @@ function renderDays(days, title) {
         '<span class="match-map">' + escapeHtml(translateMap(match.mapName)) + '</span>' +
         '<span class="match-mode">' + escapeHtml(translateMode(match.gameMode)) + '</span>' +
         '<span class="match-time">' + formatDate(match.matchTime) + '</span>' +
+        chickenDinnerBadge +
         '</div>' +
         '<div style="display:flex;align-items:center;">' +
         '<div class="match-stats">' +

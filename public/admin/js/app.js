@@ -344,6 +344,13 @@ async function generateDeathNote() {
   try {
     const res = await apiFetch(`/tasks/death-note/generate/${encodeURIComponent(nickname)}`, { method: 'POST' });
 
+    if (res.status === 400) {
+      const errorData = await res.json();
+      showResult('deathnoteResult', '创建任务失败: ' + (errorData.message || '请求参数错误'), 'error');
+      btn.disabled = false;
+      return;
+    }
+
     if (res.status === 409) {
       const errorData = await res.json();
       const errorMsg = errorData.message || errorData.error || '冲突';
@@ -427,6 +434,13 @@ async function incrementalUpdateDeathNote() {
   try {
     const res = await apiFetch(`/tasks/death-note/incremental/${encodeURIComponent(nickname)}`, { method: 'POST' });
 
+    if (res.status === 400) {
+      const errorData = await res.json();
+      showResult('deathnoteResult', '创建任务失败: ' + (errorData.message || '请求参数错误'), 'error');
+      btn.disabled = false;
+      return;
+    }
+
     if (res.status === 409) {
       showResult('deathnoteResult', '该用户已有任务正在运行，请等待完成后再试', 'error');
       btn.disabled = false;
@@ -508,6 +522,14 @@ async function forceGenerateDeathNote() {
 
   try {
     const res = await apiFetch(`/tasks/death-note/force-generate/${encodeURIComponent(nickname)}`, { method: 'POST' });
+
+    if (res.status === 400) {
+      const errorData = await res.json();
+      showResult('deathnoteResult', '创建任务失败: ' + (errorData.message || '请求参数错误'), 'error');
+      btn.disabled = false;
+      return;
+    }
+
     const data = await res.json();
 
     if (!data.success) {

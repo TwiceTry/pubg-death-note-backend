@@ -259,8 +259,20 @@ export class DeathNoteService {
   /**
    * 将击杀事件按比赛分组
    */
-  private groupEventsByMatch(killEvents: any[], userId: string): Map<string, MatchGroup> {
+  private async groupEventsByMatch(killEvents: any[], userId: string): Promise<Map<string, MatchGroup>> {
     const matchMap = new Map<string, MatchGroup>();
+    const matchIds = [...new Set(killEvents.map(e => e.matchId))];
+
+    const userMatches = await this.prisma.userMatch.findMany({
+      where: {
+        userId,
+        matchId: { in: matchIds },
+      },
+      select: { matchId: true, ranking: true },
+    });
+
+    const rankingMap = new Map<string, number | null>();
+    userMatches.forEach(um => rankingMap.set(um.matchId, um.ranking));
 
     killEvents.forEach(event => {
       const matchId = event.matchId;
@@ -271,6 +283,7 @@ export class DeathNoteService {
           matchTime: event.match?.playedAt || null,
           mapName: event.match?.mapName || null,
           gameMode: event.match?.gameMode || null,
+          ranking: rankingMap.get(matchId) || null,
           kills: 0,
           deaths: 0,
           killDetails: [],
@@ -480,7 +493,7 @@ export class DeathNoteService {
     const totalKills = killEvents.filter(e => e.killerId === userId).length;
     const totalDeaths = killEvents.filter(e => e.victimId === userId).length;
 
-    const matchMap = this.groupEventsByMatch(killEvents, userId);
+    const matchMap = await this.groupEventsByMatch(killEvents, userId);
 
     const pageMatches = Array.from(matchMap.values())
       .filter(match => match.kills > 0 || match.deaths > 0)
@@ -586,7 +599,7 @@ export class DeathNoteService {
     const totalKills = killEvents.filter(e => e.killerId === userId).length;
     const totalDeaths = killEvents.filter(e => e.victimId === userId).length;
 
-    const matchMap = this.groupEventsByMatch(killEvents, userId);
+    const matchMap = await this.groupEventsByMatch(killEvents, userId);
 
     const dayMatches = Array.from(matchMap.values())
       .filter(match => match.kills > 0 || match.deaths > 0)

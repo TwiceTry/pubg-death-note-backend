@@ -5,7 +5,15 @@
   "compilerOptions": {
     "deleteOutDir": true,
     "assets": [
-      "**/*.json"
-    ]
+      {
+        "include": "**/*.json",
+        "outDir": "dist"
+      },
+      {
+        "include": "../public/**/*",
+        "outDir": "dist/public"
+      }
+    ],
+    "watchAssets": true
   }
 }

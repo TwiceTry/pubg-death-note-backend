@@ -100,6 +100,7 @@ export interface MatchGroup {
   matchTime: Date | null;
   mapName: string | null;
   gameMode: string | null;
+  ranking: number | null;
   kills: number;
   deaths: number;
   killDetails: MatchKillDetail[];

@@ -227,7 +227,15 @@ export class PubgTaskController {
   async createDeathNoteGenerateTask(@Param('nickname') nickname: string): Promise<Record<string, any>> {
     validateNickname(nickname);
 
-    const userInfo = await this.pubgUserService.getUserByNickname(nickname);
+    let userInfo;
+    try {
+      userInfo = await this.pubgUserService.getUserByNickname(nickname);
+    } catch (error) {
+      if (error.response?.status === 404 || error.message?.includes('404')) {
+        throw new HttpException(`Player "${nickname}" not found in PUBG API`, HttpStatus.BAD_REQUEST);
+      }
+      throw error;
+    }
 
     if (await this.taskService.getRunningTask(userInfo.id)) {
       throw new HttpException('User already has a running task', HttpStatus.CONFLICT);
@@ -257,24 +265,23 @@ export class PubgTaskController {
   async createDeathNoteIncrementalTask(@Param('nickname') nickname: string): Promise<Record<string, any>> {
     validateNickname(nickname);
 
-    const userInfo = await this.pubgUserService.getUserByNickname(nickname);
+    const userId = await this.pubgDeathNoteService.getUserIdByNickname(nickname);
 
-    if (await this.taskService.getRunningTask(userInfo.id)) {
+    if (!userId) {
+      throw new HttpException(`Player "${nickname}" not found in database, please generate death note first`, HttpStatus.BAD_REQUEST);
+    }
+
+    const hasGeneration = await this.pubgDeathNoteService.hasDeathNoteGeneration(userId);
+
+    if (!hasGeneration) {
+      throw new HttpException(`Death note not yet generated for player "${nickname}", please generate first`, HttpStatus.BAD_REQUEST);
+    }
+
+    if (await this.taskService.getRunningTask(userId)) {
       throw new HttpException('User already has a running task', HttpStatus.CONFLICT);
     }
 
-    try {
-      const generation = await this.pubgDeathNoteService.getDeathNoteGenerationStatus(userInfo.id);
-      if (!generation.isGenerated) {
-        throw new HttpException('Death note not yet generated, please generate first', HttpStatus.CONFLICT);
-      }
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-    }
-
-    const result: any = await (this.pubgDeathNoteService as any).incrementalUpdate(userInfo.id);
+    const result: any = await (this.pubgDeathNoteService as any).incrementalUpdate(userId);
 
     return this.taskCreatedResponse(result.taskId, 'Death note incremental update task created');
   }
@@ -288,9 +295,13 @@ export class PubgTaskController {
   async createDeathNoteForceGenerateTask(@Param('nickname') nickname: string): Promise<Record<string, any>> {
     validateNickname(nickname);
 
-    const userInfo = await this.pubgUserService.getUserByNickname(nickname);
+    const userId = await this.pubgDeathNoteService.getUserIdByNickname(nickname);
 
-    const result: any = await (this.pubgDeathNoteService as any).forceGenerateDeathNote(userInfo.id);
+    if (!userId) {
+      throw new HttpException(`Player "${nickname}" not found in database`, HttpStatus.BAD_REQUEST);
+    }
+
+    const result: any = await (this.pubgDeathNoteService as any).forceGenerateDeathNote(userId);
 
     return this.taskCreatedResponse(result.taskId, 'Death note force generation task created');
   }

@@ -386,20 +386,22 @@ export class PubgMatchService {
   }
 
   /**
-   * 从比赛数据中提取所有参与者 playerId
+   * 从比赛数据中提取所有参与者 playerId 和 ranking
    */
-  private extractParticipants(matchData: any): string[] {
-    const participants = new Set<string>();
+  extractParticipants(matchData: any): Map<string, number> {
+    const participants = new Map<string, number>();
 
     if (matchData.included && Array.isArray(matchData.included)) {
       for (const item of matchData.included) {
         if (item.type === 'participant' && item.attributes?.stats?.playerId) {
-          participants.add(item.attributes.stats.playerId);
+          const playerId = item.attributes.stats.playerId;
+          const ranking = item.attributes.stats?.ranking;
+          participants.set(playerId, ranking || 0);
         }
       }
     }
 
-    return Array.from(participants);
+    return participants;
   }
 
   // ============================================================
@@ -423,14 +425,15 @@ export class PubgMatchService {
     await this.saveMatch(matchId, matchData);
 
     const participants = this.extractParticipants(matchData);
-    const matchedUsers = participants.filter(p => deathNoteUserIds.has(p));
+    const matchedUsers = Array.from(participants.entries())
+      .filter(([userId]) => deathNoteUserIds.has(userId));
 
     let newUserMatches = 0;
-    for (const userId of matchedUsers) {
+    for (const [userId, ranking] of matchedUsers) {
       await this.prisma.userMatch.upsert({
         where: { userId_matchId: { userId, matchId } },
-        update: {},
-        create: { userId, matchId },
+        update: { ranking },
+        create: { userId, matchId, ranking },
       });
       newUserMatches++;
     }

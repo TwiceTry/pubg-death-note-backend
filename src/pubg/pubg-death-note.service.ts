@@ -214,14 +214,6 @@ export class PubgDeathNoteService {
     }),
   })
   async incrementalUpdate(userId: string): Promise<DeathNoteGenerationResult> {
-    const generation = await this.prisma.deathNoteGeneration.findUnique({
-      where: { userId },
-    });
-
-    if (!generation?.isGenerated) {
-      throw new Error(`Death note not yet generated for user ${userId}, use requestDeathNoteGenerationByUserId first`);
-    }
-
     const matchIds = await this.matchService.getUserMatchHistory(userId);
 
     const existingMatches = await this.prisma.userMatch.findMany({
@@ -327,6 +319,27 @@ export class PubgDeathNoteService {
   // ============================================================
   // 公开 API - 查询方法
   // ============================================================
+
+  /**
+   * 根据昵称获取用户 ID（仅查询数据库）
+   */
+  async getUserIdByNickname(nickname: string): Promise<string | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { nickname },
+      select: { pubgId: true },
+    });
+    return user?.pubgId ?? null;
+  }
+
+  /**
+   * 检查用户是否已生成死亡笔记
+   */
+  async hasDeathNoteGeneration(userId: string): Promise<boolean> {
+    const generation = await this.prisma.deathNoteGeneration.findUnique({
+      where: { userId },
+    });
+    return !!generation;
+  }
 
   /**
    * 获取死亡笔记生成状态
@@ -527,18 +540,18 @@ export class PubgDeathNoteService {
       }
       await this.matchService.saveMatch(matchId, matchData);
     } else {
-      // 使用本地缓存的比赛数据，需要重新从文件加载 telemetry
       matchData = await this.matchService.getMatchOriginalData(matchId);
     }
 
-    // 关联用户到比赛
+    const participants = this.matchService.extractParticipants(matchData);
+    const ranking = participants.get(userId) || 0;
+
     await this.prisma.userMatch.upsert({
       where: { userId_matchId: { userId, matchId } },
-      update: {},
-      create: { userId, matchId },
+      update: { ranking },
+      create: { userId, matchId, ranking },
     });
 
-    // 解析并保存击杀事件
     if (matchData.telemetryEvents?.length > 0) {
       await this.matchService.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
     }

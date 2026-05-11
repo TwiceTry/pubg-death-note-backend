@@ -475,6 +475,21 @@ input[type="date"] {
   flex-wrap: wrap;
 }
 
+.chicken-dinner-badge {
+  background: linear-gradient(135deg, #ffd700, #ff8c00);
+  color: #1a1a2e;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  animation: chicken-glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes chicken-glow {
+  from { box-shadow: 0 0 5px rgba(255, 215, 0, 0.5); }
+  to { box-shadow: 0 0 15px rgba(255, 215, 0, 0.8); }
+}
+
 .match-map {
   font-weight: 700;
   color: #fff;
