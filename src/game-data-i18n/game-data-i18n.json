@@ -16,7 +16,7 @@
     "DihorOtok": "维寒迪",
     "Vikendi_Main": "维寒迪",
     "Vikendi": "维寒迪",
-    "Baltic_Main": "卡拉金",
+    "Baltic_Main": "艾伦格",
     "Baltic": "卡拉金",
     "Karakin_Baltic": "卡拉金",
     "Karakin": "卡拉金",
@@ -36,8 +36,8 @@
     "Rondo": "荣都",
     "Range_Main": "训练场",
     "Range": "训练场",
-    "Summerland_Main": "度假岛",
-    "Summerland": "度假岛"
+    "Summerland_Main": "卡拉金",
+    "Summerland": "卡拉金"
   },
   "gameModes": {
     "squad-fpp": "四排 FPP",
@@ -91,10 +91,11 @@
     "WeapMP5K_C": "MP5K",
     "WeapBizonPP19_C": "野牛冲锋枪",
     "WeapThompson_C": "汤姆逊",
+    "Weapvz61Skorpion_C": "蝎式冲锋枪",
     "WeapDP28_C": "DP-28",
     "WeapM249_C": "M249",
     "WeapMG3_C": "MG3",
-    "WeapSaiga12_C": "Saiga-12",
+    "WeapSaiga12_C": "S12K",
     "WeapP92_C": "P92",
     "WeapP1911_C": "P1911",
     "WeapP18C_C": "P18C",
