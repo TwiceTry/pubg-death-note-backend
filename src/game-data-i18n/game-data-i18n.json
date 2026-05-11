@@ -37,9 +37,17 @@
     "Range_Main": "训练场",
     "Range": "训练场",
     "Summerland_Main": "卡拉金",
-    "Summerland": "卡拉金"
+    "Summerland": "卡拉金",
+    "Boardwalk_Main": "博克沃德",
+    "Boardwalk": "博克沃德",
+    "Italy_Main": "荣都",
+    "Italy": "荣都",
+    "Italy_TDM_Main": "荣都团队竞技",
+    "PillarCompound_Main": "圣柱军团驻地",
+    "PillarCompound": "圣柱军团驻地"
   },
   "gameModes": {
+    "tdm": "团队竞技",
     "squad-fpp": "四排 FPP",
     "squad": "四排 TPP",
     "duo-fpp": "双排 FPP",
@@ -59,7 +67,8 @@
     "solo-fpp-pro": "单排 FPP (竞技)",
     "solo-pro": "单排 TPP (竞技)",
     "zombie-mode": "僵尸模式",
-    "war-mode": "战场模式"
+    "war-mode": "战场模式",
+    "ibr": "激战模式"
   },
   "weapons": {
     "WeapAK47_C": "AKM",
@@ -102,6 +111,7 @@
     "WeapR1895_C": "R1895",
     "WeapR45_C": "R45",
     "WeapSawedoff_C": "短管霰弹枪",
+    "WeapSawnoff_C": "短管霰弹枪",
     "WeapFlareGun_C": "信号枪",
     "WeapCrossbow_1_C": "十字弩",
     "WeapPan_C": "平底锅",

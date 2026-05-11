@@ -6,6 +6,7 @@ import { TaskService, TaskStatus } from '../task/task.service';
 import { ExecutableTask, getCurrentTaskContext, isTaskCancelled } from '../task/task.decorator';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { DEATH_NOTE } from '../constants';
+import { cache } from '../common/cache.utils';
 import {
   DeathNoteGenerationResult,
   DeathNoteStatusResult,
@@ -97,6 +98,9 @@ export class PubgDeathNoteService {
 
     const processedCount = matchIds.length - failedMatches.length;
     this.logger.log(`Death note generation completed for user ${userId}. Processed ${processedCount} matches.`);
+
+    // 清除该用户的死亡笔记缓存
+    await cache.invalidatePattern(`deathnote:${userId}:`);
 
     const nickname = await this.getUserNickname(userId);
 
@@ -194,6 +198,9 @@ export class PubgDeathNoteService {
 
     this.logger.log(`Force generation completed for user ${userId}. Total: ${totalMatches} matches.`);
 
+    // 清除该用户的死亡笔记缓存
+    await cache.invalidatePattern(`deathnote:${userId}:`);
+
     const nickname = await this.getUserNickname(userId);
 
     return { userId, nickname, isGenerated: true, totalMatches, processedMatches: processedCount };
@@ -238,6 +245,9 @@ export class PubgDeathNoteService {
 
     const processedCount = matchesToProcess.length - failedMatches.length;
     this.logger.log(`Incremental update completed for user ${userId}. Processed ${processedCount} matches.`);
+
+    // 清除该用户的死亡笔记缓存
+    await cache.invalidatePattern(`deathnote:${userId}:`);
 
     const nickname = await this.getUserNickname(userId);
 
@@ -544,12 +554,11 @@ export class PubgDeathNoteService {
     }
 
     const participants = this.matchService.extractParticipants(matchData);
-    const ranking = participants.get(userId) || 0;
-
+    const participantInfo = participants.get(userId) || { ranking: 0, won: false };
     await this.prisma.userMatch.upsert({
       where: { userId_matchId: { userId, matchId } },
-      update: { ranking },
-      create: { userId, matchId, ranking },
+      update: { ranking: participantInfo.ranking, won: participantInfo.won },
+      create: { userId, matchId, ranking: participantInfo.ranking, won: participantInfo.won },
     });
 
     if (matchData.telemetryEvents?.length > 0) {

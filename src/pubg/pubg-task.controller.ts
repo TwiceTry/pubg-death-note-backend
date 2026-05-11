@@ -99,15 +99,9 @@ export class PubgTaskController {
   async reparseMatchTelemetry(@Param('matchId') matchId: string): Promise<Record<string, any>> {
     validateMatchId(matchId);
 
-    const taskId = await this.taskService.createAndExecuteTask(
-      'reparse_match',
-      async () => {
-        const result = await this.pubgMatchService.reparseMatchTelemetry(matchId);
-        return { ...result, matchId };
-      },
-    );
+    const result: any = await (this.pubgMatchService as any).reparseMatchTelemetry(matchId);
 
-    return this.taskCreatedResponse(taskId, 'Reparse task created');
+    return this.taskCreatedResponse(result.taskId, 'Reparse task created');
   }
 
   // ============================================================

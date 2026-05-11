@@ -269,23 +269,32 @@ async function fetchDateData(dateStr) {
     renderDays(data.days, dateStr);
 
     var resultEl = document.getElementById('result-deathnote');
-    var statsHtml = buildStatsHtml(data);
+    var statsHtml = buildStatsHtml(data, dateStr);
     resultEl.innerHTML = statsHtml + resultEl.innerHTML;
   } catch (error) {
     console.error('Failed to load date data:', error);
   }
 }
 
-function buildStatsHtml(data) {
-  return '<div class="stat-row">' +
+function buildStatsHtml(data, dateRange) {
+  var rangeHtml = '';
+  if (dateRange) {
+    rangeHtml = '<div class="stat-row">' +
+      '<span class="stat-label">数据范围</span>' +
+      '<span class="stat-value">' + dateRange + '</span>' +
+      '</div>';
+  } else if (data.startDate && data.endDate) {
+    rangeHtml = '<div class="stat-row">' +
+      '<span class="stat-label">数据范围</span>' +
+      '<span class="stat-value">' + data.startDate + ' ~ ' + data.endDate + '</span>' +
+      '</div>';
+  }
+
+  return rangeHtml +
+    '<div class="stat-row">' +
     '<span class="stat-label">玩家</span>' +
     '<span class="stat-value">' + escapeHtml(data.nickname) + '</span>' +
     '</div>' +
-    (data.startDate && data.endDate ?
-      '<div class="stat-row">' +
-      '<span class="stat-label">数据范围</span>' +
-      '<span class="stat-value">' + data.startDate + ' ~ ' + data.endDate + '</span>' +
-      '</div>' : '') +
     '<div class="stat-row">' +
     '<span class="stat-label">总击杀</span>' +
     '<span class="stat-value" style="color:#2ed573">' + data.totalKills + '</span>' +
@@ -361,7 +370,12 @@ function renderDays(days, title) {
       }
 
       var matchId = 'match-' + day.date + '-' + idx;
-      var chickenDinnerBadge = match.ranking === 1 ? '<span class="chicken-dinner-badge">🍗 吃鸡</span>' : '';
+      var gameMode = (match.gameMode || '').toLowerCase();
+      var isArcadeMode = gameMode.includes('tdm') || gameMode.includes('war') || gameMode.includes('arena');
+      var victoryBadge = '';
+      if (match.ranking === 1) {
+        victoryBadge = isArcadeMode ? '<span class="chicken-dinner-badge">🏆 胜利</span>' : '<span class="chicken-dinner-badge">🍗 吃鸡</span>';
+      }
 
       return '<div class="match-card">' +
         '<div class="match-header" onclick="toggleMatch(\'' + matchId + '\')">' +
@@ -369,7 +383,7 @@ function renderDays(days, title) {
         '<span class="match-map">' + escapeHtml(translateMap(match.mapName)) + '</span>' +
         '<span class="match-mode">' + escapeHtml(translateMode(match.gameMode)) + '</span>' +
         '<span class="match-time">' + formatDate(match.matchTime) + '</span>' +
-        chickenDinnerBadge +
+        victoryBadge +
         '</div>' +
         '<div style="display:flex;align-items:center;">' +
         '<div class="match-stats">' +
@@ -410,6 +424,8 @@ function renderDays(days, title) {
       '<button class="page-btn" onclick="showAllDays()">显示全部</button>' +
       '</div>';
   }
+
+  var statsHtml = allStatsData ? buildStatsHtml(allStatsData) : '';
 
   showSuccess('result-deathnote',
     '<div class="result-title">死亡笔记' + (title ? ' - ' + title : '') + '</div>' +
@@ -621,28 +637,7 @@ async function queryDeathNote(page) {
       return;
     }
 
-    var statsHtml =
-      '<div class="stat-row">' +
-      '<span class="stat-label">玩家</span>' +
-      '<span class="stat-value">' + escapeHtml(data.nickname) + '</span>' +
-      '</div>' +
-      (data.startDate && data.endDate ?
-        '<div class="stat-row">' +
-        '<span class="stat-label">数据范围</span>' +
-        '<span class="stat-value">' + data.startDate + ' ~ ' + data.endDate + '</span>' +
-        '</div>' : '') +
-      '<div class="stat-row">' +
-      '<span class="stat-label">总击杀</span>' +
-      '<span class="stat-value" style="color:#2ed573">' + data.totalKills + '</span>' +
-      '</div>' +
-      '<div class="stat-row">' +
-      '<span class="stat-label">总死亡</span>' +
-      '<span class="stat-value" style="color:#ff4757">' + data.totalDeaths + '</span>' +
-      '</div>' +
-      '<div class="stat-row">' +
-      '<span class="stat-label">比赛场次</span>' +
-      '<span class="stat-value">' + data.totalMatches + '</span>' +
-      '</div>';
+    var statsHtml = buildStatsHtml(data);
 
     allDaysData = data.days;
     availableDates = data.days.map(function (day) { return day.date; });
@@ -706,6 +701,30 @@ document.querySelectorAll('input').forEach(function (input) {
   });
 });
 
+async function fetchAvailableDates(nickname) {
+  try {
+    var url = getApiBase() + '/death-note/nickname/' + encodeURIComponent(nickname) + '/available-dates';
+    var response = await fetch(url);
+    var data = await response.json();
+
+    if (response.ok && data.success) {
+      availableDates = data.dates;
+      renderCalendar();
+      
+      if (availableDates.length > 0 && !selectedDate) {
+        selectedDate = availableDates[0];
+        var d = new Date(selectedDate + 'T00:00:00');
+        currentViewDate = d;
+        currentCalendarDate = new Date(d);
+        renderCalendar();
+        fetchDateData(selectedDate);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load available dates:', error);
+  }
+}
+
 (function init() {
   loadGameDataI18n().then(function() {
     var path = window.location.pathname;
@@ -716,7 +735,9 @@ document.querySelectorAll('input').forEach(function (input) {
       document.getElementById('deathnote-nickname').value = pageNickname;
       document.getElementById('deathnote-search').style.display = 'none';
       document.getElementById('guideText').textContent = '输入另一位玩家昵称，查看 ' + pageNickname + ' 是否被对方击杀或击杀过对方';
-      queryDeathNote();
+      
+      currentDeathNoteNickname = pageNickname;
+      fetchAvailableDates(pageNickname);
     }
   });
 })();

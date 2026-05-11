@@ -8,6 +8,7 @@ import { PubgApiService } from './pubg-api.service';
 import { MatchDataResult, TelemetryKillEventV2, TelemetryEvent } from './pubg.interfaces';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { TaskService } from '../task/task.service';
+import { cache } from '../common/cache.utils';
 import { ExecutableTask, getCurrentTaskContext } from '../task/task.decorator';
 
 interface MatchPaths {
@@ -76,6 +77,7 @@ export class PubgMatchService {
 
     return {
       attributes: matchData.data.attributes,
+      included: matchData.included,
       telemetryEvents,
       dataPath: datedPaths.matchFilePath,
     };
@@ -218,6 +220,7 @@ export class PubgMatchService {
 
         return {
           attributes: matchData.data.attributes,
+          included: matchData.included,
           telemetryEvents,
           dataPath: matchFile,
         };
@@ -386,18 +389,49 @@ export class PubgMatchService {
   }
 
   /**
-   * 从比赛数据中提取所有参与者 playerId 和 ranking
+   * 从比赛数据中提取所有参与者 playerId、ranking 和 won
+   * 排名和胜利信息都在 roster 对象中
+   * roster.relationships.participants.data 包含该队伍的 participant id 列表
+   * 通过 participant.id 匹配到对应的 roster 获取 ranking 和 won
    */
-  extractParticipants(matchData: any): Map<string, number> {
-    const participants = new Map<string, number>();
+  extractParticipants(matchData: MatchDataResult): Map<string, { ranking: number; won: boolean }> {
+    const participants = new Map<string, { ranking: number; won: boolean }>();
 
-    if (matchData.included && Array.isArray(matchData.included)) {
-      for (const item of matchData.included) {
-        if (item.type === 'participant' && item.attributes?.stats?.playerId) {
-          const playerId = item.attributes.stats.playerId;
-          const ranking = item.attributes.stats?.ranking;
-          participants.set(playerId, ranking || 0);
+    const included = (matchData as any).included;
+    if (!included || !Array.isArray(included)) {
+      return participants;
+    }
+
+    // 步骤 1：建立 participantId -> { rank, won } 的映射
+    const participantInfoMap = new Map<string, { rank: number; won: boolean }>();
+    for (const item of included) {
+      if (item.type === 'roster' && item.id) {
+        const rank = item.attributes?.stats?.rank;
+        const won = item.attributes?.won === 'true' || item.attributes?.won === true;
+        
+        // 获取该 roster 下的所有 participant id
+        const participantIds = item.relationships?.participants?.data;
+        if (Array.isArray(participantIds)) {
+          for (const p of participantIds) {
+            if (p?.type === 'participant' && p?.id) {
+              participantInfoMap.set(p.id, { rank: rank || 0, won });
+            }
+          }
         }
+      }
+    }
+
+    // 步骤 2：遍历 participant，通过 participant.id 匹配到对应的 roster 信息
+    for (const item of included) {
+      if (item.type === 'participant' && item.attributes?.stats?.playerId) {
+        const playerId = item.attributes.stats.playerId;
+        const participantId = item.id;
+        const info = participantInfoMap.get(participantId);
+
+        participants.set(playerId, {
+          ranking: info?.rank || 0,
+          won: info?.won ?? false,
+        });
       }
     }
 
@@ -429,11 +463,11 @@ export class PubgMatchService {
       .filter(([userId]) => deathNoteUserIds.has(userId));
 
     let newUserMatches = 0;
-    for (const [userId, ranking] of matchedUsers) {
+    for (const [userId, { ranking, won }] of matchedUsers) {
       await this.prisma.userMatch.upsert({
         where: { userId_matchId: { userId, matchId } },
-        update: { ranking },
-        create: { userId, matchId, ranking },
+        update: { ranking, won },
+        create: { userId, matchId, ranking, won },
       });
       newUserMatches++;
     }
@@ -509,6 +543,9 @@ export class PubgMatchService {
       }
     }
 
+    // 清除所有受影响用户的死亡笔记缓存
+    await this.invalidateDeathNoteCache();
+
     return {
       success: true,
       message: `Local match sync completed: ${processedMatches}/${totalMatches} matches`,
@@ -519,6 +556,19 @@ export class PubgMatchService {
       newUserMatches,
       newKillEvents,
     };
+  }
+
+  /**
+   * 清除所有已生成死亡笔记的用户的缓存
+   */
+  private async invalidateDeathNoteCache(): Promise<void> {
+    const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
+      where: { isGenerated: true },
+      select: { userId: true },
+    });
+    for (const user of deathNoteUsers) {
+      await cache.invalidatePattern(`deathnote:${user.userId}:`);
+    }
   }
 
   // ============================================================
@@ -556,6 +606,15 @@ export class PubgMatchService {
    * 重解析单场比赛遥测数据
    * 删除本地缓存后重新从 API 获取并解析击杀事件
    */
+  @ExecutableTask({
+    type: 'reparse_match',
+    async: true,
+    buildResult: (result, args) => ({
+      success: true,
+      message: `Match ${(args[0] as string)} telemetry reparse completed`,
+      ...(result as Record<string, unknown>),
+    }),
+  })
   async reparseMatchTelemetry(matchId: string): Promise<{ success: boolean; matchId: string; message: string }> {
     try {
       const dataFileName = `${matchId}.json`;

@@ -110,6 +110,25 @@ export class DeathNoteController {
   }
 
   /**
+   * 获取有数据的日期列表（轻量级，用于日历绿点显示）
+   * GET /api/v1/death-note/nickname/:nickname/available-dates
+   */
+  @Get('nickname/:nickname/available-dates')
+  async getAvailableDates(@Param('nickname') nickname: string) {
+    try {
+      validateNickname(nickname);
+      const dates = await this.deathNoteService.getAvailableDates(nickname);
+      return this.successResponse({ dates });
+    } catch (error) {
+      this.logger.error(`Error getting available dates for ${nickname}:`, error);
+      throw new HttpException(
+        error.message || 'Failed to get available dates',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * 分页获取死亡笔记数据（按天分组）
    * GET /api/v1/death-note/nickname/:nickname/matches?page=1&pageSize=10
    * GET /api/v1/death-note/nickname/:nickname/matches?date=2024-01-01

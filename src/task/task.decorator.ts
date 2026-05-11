@@ -217,54 +217,34 @@ export function ExecutableTask(options: TaskDecoratorOptions) {
         },
       };
 
-      // 执行任务核心逻辑
-      const executeTask = async (): Promise<unknown> => {
-        try {
-          await taskService.setTaskRunning(taskId);
+      // 使用 taskService.executeTask 统一执行流程
+      const taskFn = async (currentTaskId: string): Promise<TaskResult> => {
+        // 在 AsyncLocalStorage 中执行，使所有下游代码可访问当前任务上下文
+        return await taskContextStorage.run(context, async () => {
+          const result = await originalMethod.call(this, ...args);
 
-          // 在 AsyncLocalStorage 中执行，使所有下游代码可访问当前任务上下文
-          return await taskContextStorage.run(context, async () => {
-            const result = await originalMethod.call(this, ...args);
-
-            // 构建任务结果
-            const taskResult = options.buildResult
-              ? options.buildResult(result, args)
-              : {
-                  success: true,
-                  message: (result as Record<string, unknown>)?.message as string | undefined || 'Task completed successfully',
-                  ...(result as Record<string, unknown>),
-                };
-
-            await taskService.setTaskResult(taskId, taskResult);
-            return { taskId, ...taskResult };
-          });
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          const isCancelled = errorMessage === 'Task was cancelled' || (error as Error)?.name === 'AbortError';
-
-          if (isCancelled) {
-            await taskService.setTaskFailed(taskId, 'Task was cancelled');
-          } else {
-            await taskService.setTaskFailed(taskId, errorMessage);
-          }
-
-          throw error;
-        } finally {
-          clearInterval(cancelInterval);
-        }
+          // 构建任务结果
+          return options.buildResult
+            ? options.buildResult(result, args)
+            : {
+                success: true,
+                message: (result as Record<string, unknown>)?.message as string | undefined || 'Task completed successfully',
+                ...(result as Record<string, unknown>),
+              };
+        });
       };
 
       // 异步执行：立即返回 taskId
       if (options.async) {
-        executeTask().catch((error: unknown) => {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.logger?.error?.(`Task ${taskId} failed: ${errorMessage}`);
-        });
+        taskService.executeTask(taskId, taskFn).finally(() => clearInterval(cancelInterval));
         return { taskId };
       }
 
-      // 同步执行：等待任务完成
-      return executeTask();
+      // 同步执行：等待任务完成并返回结果
+      const taskResult = await taskFn(taskId);
+      await taskService.setTaskResult(taskId, taskResult);
+      clearInterval(cancelInterval);
+      return { taskId, ...taskResult };
     };
   };
 }

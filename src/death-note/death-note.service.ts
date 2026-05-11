@@ -268,11 +268,15 @@ export class DeathNoteService {
         userId,
         matchId: { in: matchIds },
       },
-      select: { matchId: true, ranking: true },
+      select: { matchId: true, ranking: true, won: true },
     });
 
     const rankingMap = new Map<string, number | null>();
-    userMatches.forEach(um => rankingMap.set(um.matchId, um.ranking));
+    const wonMap = new Map<string, boolean>();
+    userMatches.forEach(um => {
+      rankingMap.set(um.matchId, um.ranking);
+      wonMap.set(um.matchId, um.won);
+    });
 
     killEvents.forEach(event => {
       const matchId = event.matchId;
@@ -284,6 +288,7 @@ export class DeathNoteService {
           mapName: event.match?.mapName || null,
           gameMode: event.match?.gameMode || null,
           ranking: rankingMap.get(matchId) || null,
+          won: wonMap.get(matchId) || false,
           kills: 0,
           deaths: 0,
           killDetails: [],
@@ -528,6 +533,53 @@ export class DeathNoteService {
     await cache.set(cacheKey, result, this.CACHE_TTL);
 
     return result;
+  }
+
+  /**
+   * 获取有数据的日期列表（轻量级，用于日历绿点显示）
+   */
+  async getAvailableDates(nickname: string): Promise<string[]> {
+    const cacheKey = `deathnote:${nickname}:dates`;
+    const cached = await cache.get<string[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const cachedUser = await this.prisma.user.findFirst({
+      where: { nickname },
+    });
+
+    if (!cachedUser) {
+      return [];
+    }
+
+    const userId = cachedUser.pubgId;
+
+    const matchDates = await this.prisma.match.findMany({
+      where: {
+        killEvents: {
+          some: {
+            OR: [
+              { killerId: userId },
+              { victimId: userId },
+            ],
+          },
+        },
+      },
+      select: { playedAt: true },
+      orderBy: { playedAt: 'desc' },
+      distinct: ['playedAt'],
+    });
+
+    const allDates = [...new Set(
+      matchDates
+        .filter(m => m.playedAt)
+        .map(m => new Date(m.playedAt!).toISOString().split('T')[0])
+    )].sort((a, b) => b.localeCompare(a));
+
+    await cache.set(cacheKey, allDates, this.CACHE_TTL);
+
+    return allDates;
   }
 
   /**

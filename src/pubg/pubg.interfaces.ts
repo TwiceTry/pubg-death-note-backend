@@ -141,6 +141,7 @@ export type TelemetryEvent = LogPlayerKill | TelemetryBaseEvent;
  */
 export interface MatchDataResult {
   attributes: PubgMatchAttributes;
+  included?: any[];
   telemetryEvents: TelemetryEvent[];
   dataPath: string;
 }

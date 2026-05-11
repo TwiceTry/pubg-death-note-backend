@@ -456,14 +456,4 @@ export class TaskService {
       this.logger.error(`Task ${taskId} failed: ${errorMessage}`);
     }
   }
-
-  async createAndExecuteTask(type: string, taskFn: (taskId: string) => Promise<TaskResult>, userId?: string): Promise<string> {
-    const taskId = await this.createTask(type, userId);
-
-    this.executeTask(taskId, taskFn).catch(error => {
-      this.logger.error(`Error executing task ${taskId}:`, error);
-    });
-
-    return taskId;
-  }
 }

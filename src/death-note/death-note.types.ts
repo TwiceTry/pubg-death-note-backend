@@ -101,6 +101,7 @@ export interface MatchGroup {
   mapName: string | null;
   gameMode: string | null;
   ranking: number | null;
+  won: boolean;
   kills: number;
   deaths: number;
   killDetails: MatchKillDetail[];
