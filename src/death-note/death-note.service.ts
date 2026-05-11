@@ -12,6 +12,8 @@ import {
   DeathNotePaginatedResponse,
   MatchGroup,
   DayMatchGroup,
+  SniperQueryResponse,
+  SniperPlayer,
 } from './death-note.types';
 
 @Injectable()
@@ -705,6 +707,166 @@ export class DeathNoteService {
       pageSize: allDates.length,
       totalPages: 1,
       days: dayData ? [dayData] : [],
+    };
+
+    await cache.set(cacheKey, result, this.CACHE_TTL);
+
+    return result;
+  }
+
+  /**
+   * 狙击查询：统计与指定目标玩家的相互击杀互动次数
+   * 返回击杀当前玩家2次以上的玩家榜单，按击杀次数排名，只返回前5名
+   */
+  async getSniperList(nickname: string, targetNickname?: string): Promise<SniperQueryResponse> {
+    const cacheKey = `deathnote:${nickname}:snipers:${targetNickname || 'all'}`;
+    const cached = await cache.get<SniperQueryResponse>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const cachedUser = await this.prisma.user.findFirst({
+      where: { nickname },
+    });
+
+    if (!cachedUser) {
+      return {
+        userId: '',
+        nickname,
+        totalSnipers: 0,
+        snipers: [],
+      };
+    }
+
+    const userId = cachedUser.pubgId;
+
+    // 如果指定了目标玩家，只查询与该玩家的互动
+    let killedByEvents: Array<{ killerId: string | null; killerName: string | null }>;
+    let myKillEvents: Array<{ victimId: string; victimName: string | null }>;
+
+    if (targetNickname) {
+      const targetUser = await this.prisma.user.findFirst({
+        where: { nickname: targetNickname },
+      });
+
+      if (!targetUser) {
+        return {
+          userId,
+          nickname: cachedUser.nickname,
+          totalSnipers: 0,
+          snipers: [],
+        };
+      }
+
+      const targetUserId = targetUser.pubgId;
+
+      killedByEvents = await this.prisma.killEvent.findMany({
+        where: {
+          victimId: userId,
+          killerId: targetUserId,
+          match: {
+            gameMode: {
+              not: { contains: 'tdm' },
+            },
+          },
+        },
+        select: {
+          killerId: true,
+          killerName: true,
+        },
+      });
+
+      myKillEvents = await this.prisma.killEvent.findMany({
+        where: {
+          killerId: userId,
+          victimId: targetUserId,
+          match: {
+            gameMode: {
+              not: { contains: 'tdm' },
+            },
+          },
+        },
+        select: {
+          victimId: true,
+          victimName: true,
+        },
+      });
+    } else {
+      killedByEvents = await this.prisma.killEvent.findMany({
+        where: {
+          victimId: userId,
+          killerId: { not: null },
+          match: {
+            gameMode: {
+              not: { contains: 'tdm' },
+            },
+          },
+        },
+        select: {
+          killerId: true,
+          killerName: true,
+        },
+      });
+
+      myKillEvents = await this.prisma.killEvent.findMany({
+        where: {
+          killerId: userId,
+          match: {
+            gameMode: {
+              not: { contains: 'tdm' },
+            },
+          },
+        },
+        select: {
+          victimId: true,
+          victimName: true,
+        },
+      });
+    }
+
+    const killsByThemMap = new Map<string, { name: string; count: number }>();
+    killedByEvents.forEach(event => {
+      if (event.killerId) {
+        const existing = killsByThemMap.get(event.killerId);
+        if (existing) {
+          existing.count++;
+        } else {
+          killsByThemMap.set(event.killerId, { name: event.killerName || 'Unknown', count: 1 });
+        }
+      }
+    });
+
+    const killsByMeMap = new Map<string, { name: string; count: number }>();
+    myKillEvents.forEach(event => {
+      const existing = killsByMeMap.get(event.victimId);
+      if (existing) {
+        existing.count++;
+      } else {
+        killsByMeMap.set(event.victimId, { name: event.victimName || 'Unknown', count: 1 });
+      }
+    });
+
+    const snipers: SniperPlayer[] = [];
+    killsByThemMap.forEach((data, killerId) => {
+      if (data.count >= 2) {
+        const killsByMe = killsByMeMap.get(killerId)?.count || 0;
+        snipers.push({
+          killerName: data.name,
+          killerId,
+          killsByThem: data.count,
+          killsByMe,
+          totalInteractions: data.count + killsByMe,
+        });
+      }
+    });
+
+    snipers.sort((a, b) => b.killsByThem - a.killsByThem);
+
+    const result: SniperQueryResponse = {
+      userId,
+      nickname: cachedUser.nickname,
+      totalSnipers: snipers.length,
+      snipers: snipers.slice(0, 5),
     };
 
     await cache.set(cacheKey, result, this.CACHE_TTL);

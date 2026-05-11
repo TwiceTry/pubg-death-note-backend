@@ -129,3 +129,18 @@ export interface DeathNotePaginatedResponse {
   totalPages: number;
   days: DayMatchGroup[];
 }
+
+export interface SniperPlayer {
+  killerName: string;
+  killerId: string | null;
+  killsByThem: number;
+  killsByMe: number;
+  totalInteractions: number;
+}
+
+export interface SniperQueryResponse {
+  userId: string;
+  nickname: string;
+  totalSnipers: number;
+  snipers: SniperPlayer[];
+}

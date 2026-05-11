@@ -863,6 +863,103 @@ input[type="date"] {
   color: #7bed9f;
 }
 
+.sniper-guide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  background: rgba(255, 165, 0, 0.05);
+  border: 1px solid rgba(255, 165, 0, 0.15);
+  border-radius: 4px;
+}
+
+.sniper-section {
+  margin-top: 20px;
+  padding: 15px;
+  background: rgba(255, 165, 0, 0.03);
+  border: 1px solid rgba(255, 165, 0, 0.15);
+  border-radius: 4px;
+}
+
+.sniper-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffa500;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.sniper-count {
+  text-align: center;
+  color: #ffa500;
+  font-size: 14px;
+  margin-bottom: 15px;
+}
+
+.sniper-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sniper-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 165, 0, 0.2);
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.sniper-item:hover {
+  background: rgba(255, 165, 0, 0.05);
+  border-color: rgba(255, 165, 0, 0.4);
+}
+
+.sniper-rank {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ffa500;
+  min-width: 40px;
+  text-align: center;
+  font-family: 'Black Ops One', cursive;
+}
+
+.sniper-info {
+  flex: 1;
+}
+
+.sniper-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #e0e0e0;
+  margin-bottom: 6px;
+}
+
+.sniper-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.sniper-kills-by-them {
+  color: #ff4757;
+  font-size: 13px;
+}
+
+.sniper-kills-by-me {
+  color: #2ed573;
+  font-size: 13px;
+}
+
+.sniper-total {
+  color: #ffa500;
+  font-size: 13px;
+}
+
 @media (max-width: 600px) {
   body {
     padding: 10px;
@@ -956,4 +1053,24 @@ input[type="date"] {
     font-size: 10px;
     padding: 2px 6px;
   }
+}
+
+.victim-buttons {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.victim-buttons .btn {
+  flex: 1;
+}
+
+.btn-sniper {
+  background: rgba(255, 165, 0, 0.2);
+  border-color: rgba(255, 165, 0, 0.5);
+}
+
+.btn-sniper:hover {
+  background: rgba(255, 165, 0, 0.3);
+  border-color: #ffa500;
 }

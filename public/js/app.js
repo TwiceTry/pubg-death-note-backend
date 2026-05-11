@@ -588,6 +588,60 @@ async function queryVictimHistory() {
   }
 }
 
+async function querySniperForVictim() {
+  if (!pageNickname) {
+    alert('请先查询死亡笔记');
+    return;
+  }
+
+  var btn = document.getElementById('btn-sniper-victim');
+  btn.disabled = true;
+  showLoading('result-victim');
+
+  try {
+    var url = getApiBase() + '/death-note/nickname/' + encodeURIComponent(pageNickname) + '/snipers';
+    var response = await fetch(url);
+    var data = await response.json();
+
+    if (!response.ok || !data.success) {
+      showError('result-victim', data.message || data.error || '请求失败');
+      return;
+    }
+
+    if (data.totalSnipers === 0) {
+      showSuccess('result-victim',
+        '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
+        '<div class="empty-state">暂无狙击玩家（击杀互动2次以上）</div>'
+      );
+      return;
+    }
+
+    var snipersHtml = data.snipers.map(function (sniper, idx) {
+      return '<div class="sniper-item">' +
+        '<div class="sniper-rank">#' + (idx + 1) + '</div>' +
+        '<div class="sniper-info">' +
+        '<div class="sniper-name">' + escapeHtml(sniper.killerName) + '</div>' +
+        '<div class="sniper-stats">' +
+        '<span class="sniper-kills-by-them">被击杀: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-me">击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
+        '<span class="sniper-total">总互动: <strong>' + sniper.totalInteractions + '</strong> 次</span>' +
+        '</div>' +
+        '</div>' +
+        '</div>';
+    }).join('');
+
+    showSuccess('result-victim',
+      '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
+      '<div class="sniper-count">共 <strong>' + data.totalSnipers + '</strong> 名狙击玩家</div>' +
+      '<div class="sniper-list">' + snipersHtml + '</div>'
+    );
+  } catch (error) {
+    showError('result-victim', error.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function queryDeathNote(page) {
   var nickname = document.getElementById('deathnote-nickname').value.trim();
 
@@ -677,6 +731,62 @@ async function queryDeathNote(page) {
 
 function loadDeathNotePage(page) {
   queryDeathNote(page);
+}
+
+async function querySnipers() {
+  var nickname = currentDeathNoteNickname || document.getElementById('deathnote-nickname').value.trim();
+
+  if (!nickname) {
+    showError('result-snipers', '请先查询死亡笔记或输入玩家昵称');
+    return;
+  }
+
+  var btn = document.getElementById('btn-snipers');
+  btn.disabled = true;
+  showLoading('result-snipers');
+
+  try {
+    var url = getApiBase() + '/death-note/nickname/' + encodeURIComponent(nickname) + '/snipers';
+    var response = await fetch(url);
+    var data = await response.json();
+
+    if (!response.ok || !data.success) {
+      showError('result-snipers', data.message || data.error || '请求失败');
+      return;
+    }
+
+    if (data.totalSnipers === 0) {
+      showSuccess('result-snipers',
+        '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
+        '<div class="empty-state">暂无狙击玩家（击杀互动2次以上）</div>'
+      );
+      return;
+    }
+
+    var snipersHtml = data.snipers.map(function (sniper, idx) {
+      return '<div class="sniper-item">' +
+        '<div class="sniper-rank">#' + (idx + 1) + '</div>' +
+        '<div class="sniper-info">' +
+        '<div class="sniper-name">' + escapeHtml(sniper.killerName) + '</div>' +
+        '<div class="sniper-stats">' +
+        '<span class="sniper-kills-by-them">被击杀: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-me">击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
+        '<span class="sniper-total">总互动: <strong>' + sniper.totalInteractions + '</strong> 次</span>' +
+        '</div>' +
+        '</div>' +
+        '</div>';
+    }).join('');
+
+    showSuccess('result-snipers',
+      '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
+      '<div class="sniper-count">共 <strong>' + data.totalSnipers + '</strong> 名狙击玩家</div>' +
+      '<div class="sniper-list">' + snipersHtml + '</div>'
+    );
+  } catch (error) {
+    showError('result-snipers', error.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 document.querySelectorAll('.tab').forEach(function (tab) {

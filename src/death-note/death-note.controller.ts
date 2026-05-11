@@ -129,6 +129,28 @@ export class DeathNoteController {
   }
 
   /**
+   * 狙击查询：统计相互击杀互动次数的对局玩家
+   * GET /api/v1/death-note/nickname/:nickname/snipers?target=xxx
+   */
+  @Get('nickname/:nickname/snipers')
+  async getSniperList(
+    @Param('nickname') nickname: string,
+    @Query('target') target?: string,
+  ) {
+    try {
+      validateNickname(nickname);
+      const result = await this.deathNoteService.getSniperList(nickname, target);
+      return this.successResponse(result);
+    } catch (error) {
+      this.logger.error(`Error getting sniper list for ${nickname}:`, error);
+      throw new HttpException(
+        error.message || 'Failed to get sniper list',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * 分页获取死亡笔记数据（按天分组）
    * GET /api/v1/death-note/nickname/:nickname/matches?page=1&pageSize=10
    * GET /api/v1/death-note/nickname/:nickname/matches?date=2024-01-01
