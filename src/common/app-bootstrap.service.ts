@@ -1,8 +1,10 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { TaskService } from '../task/task.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PubgDeathNoteService } from '../pubg/pubg-death-note.service';
+import { DeathNoteProgressService } from '../pubg/pubg-death-note-progress.service';
+import { DeathNoteGenerationService } from '../pubg/death-note-generation.service';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
+import { TaskService } from '../task/task.service';
 
 @Injectable()
 export class AppBootstrapService implements OnModuleInit {
@@ -10,6 +12,8 @@ export class AppBootstrapService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly taskService: TaskService,
     private readonly pubgDeathNoteService: PubgDeathNoteService,
+    private readonly progressService: DeathNoteProgressService,
+    private readonly generationService: DeathNoteGenerationService,
     private readonly logger: DualOutputLoggerService,
   ) {}
 
@@ -33,9 +37,8 @@ export class AppBootstrapService implements OnModuleInit {
    * 恢复未完成的死亡笔记生成任务
    */
   private async resumeIncompleteTasks(): Promise<void> {
-    const incompleteGenerations = await this.prisma.deathNoteGeneration.findMany({
-      where: { isGenerated: false },
-    });
+    const generations = await this.generationService.findAll();
+    const incompleteGenerations = generations.filter(g => !g.isGenerated);
 
     if (incompleteGenerations.length === 0) {
       this.logger.log('No incomplete generations to resume', 'Bootstrap');
@@ -57,16 +60,14 @@ export class AppBootstrapService implements OnModuleInit {
    * 恢复单个用户的生成任务
    */
   private async resumeSingleUser(userId: string): Promise<void> {
-    const progress = await this.prisma.deathNoteProgress.findUnique({
-      where: { userId },
-    });
+    const progress = await this.progressService.getProgress(userId);
 
     if (!progress) {
       this.logger.warn(`No progress record for user ${userId}, waiting for user to retry`, 'Bootstrap');
       return;
     }
 
-    const processedCount = JSON.parse(progress.processedMatches).length;
+    const processedCount = progress.processedMatches.length;
     this.logger.log(`Resuming user ${userId}: ${processedCount} matches already processed`, 'Bootstrap');
 
     const hasRunning = await this.taskService.getRunningTask(userId);

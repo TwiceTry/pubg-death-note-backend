@@ -3,9 +3,11 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PubgUserService } from '../pubg/pubg-user.service';
 import { PubgDeathNoteService } from '../pubg/pubg-death-note.service';
+import { KillEventService } from '../pubg/kill-event.service';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { DEATH_NOTE } from '../constants';
 import { cache } from '../common/cache.utils';
+import { UserMatchService } from '../pubg/user-match.service';
 import {
   UserInfo,
   VictimKillHistoryResponse,
@@ -25,6 +27,8 @@ export class DeathNoteService {
     private readonly prisma: PrismaService,
     private readonly pubgUserService: PubgUserService,
     private readonly pubgDeathNoteService: PubgDeathNoteService,
+    private readonly killEventService: KillEventService,
+    private readonly userMatchService: UserMatchService,
     private readonly logger: DualOutputLoggerService,
   ) {}
 
@@ -111,49 +115,19 @@ export class DeathNoteService {
       where: { nickname: victimNickname },
     });
 
-    // 查询 nickname 击杀 victimNickname 的记录
-    const killerWhereClause: any = {};
-    if (cachedKiller) {
-      killerWhereClause.killerId = cachedKiller.pubgId;
-    } else {
-      killerWhereClause.killerName = nickname;
-    }
-    if (cachedVictim) {
-      killerWhereClause.victimId = cachedVictim.pubgId;
-    } else {
-      killerWhereClause.victimName = victimNickname;
-    }
-
-    // 查询 victimNickname 击杀 nickname 的记录（反向）
-    const victimWhereClause: any = {};
-    if (cachedVictim) {
-      victimWhereClause.killerId = cachedVictim.pubgId;
-    } else {
-      victimWhereClause.killerName = victimNickname;
-    }
-    if (cachedKiller) {
-      victimWhereClause.victimId = cachedKiller.pubgId;
-    } else {
-      victimWhereClause.victimName = nickname;
-    }
-
     const [killEvents, deathEvents] = await Promise.all([
-      this.prisma.killEvent.findMany({
-        where: killerWhereClause,
-        include: {
-          match: {
-            select: {
-              playedAt: true,
-              mapName: true,
-              gameMode: true,
-            },
-          },
-        },
-        orderBy: { timestamp: 'desc' },
-      }),
-      this.prisma.killEvent.findMany({
-        where: victimWhereClause,
-      }),
+      this.killEventService.findByKillerOrName(
+        cachedKiller?.pubgId ?? null,
+        cachedKiller ? null : nickname,
+        cachedVictim?.pubgId ?? null,
+        cachedVictim ? null : victimNickname,
+      ),
+      this.killEventService.findByKillerOrName(
+        cachedVictim?.pubgId ?? null,
+        cachedVictim ? null : victimNickname,
+        cachedKiller?.pubgId ?? null,
+        cachedKiller ? null : nickname,
+      ),
     ]);
 
     const killDetails = killEvents.map(event => ({
@@ -191,49 +165,19 @@ export class DeathNoteService {
       where: { nickname: killerNickname },
     });
 
-    // 查询 killerNickname 击杀 nickname 的记录
-    const victimWhereClause: any = {};
-    if (cachedVictim) {
-      victimWhereClause.victimId = cachedVictim.pubgId;
-    } else {
-      victimWhereClause.victimName = nickname;
-    }
-    if (cachedKiller) {
-      victimWhereClause.killerId = cachedKiller.pubgId;
-    } else {
-      victimWhereClause.killerName = killerNickname;
-    }
-
-    // 查询 nickname 击杀 killerNickname 的记录（反向）
-    const killerWhereClause: any = {};
-    if (cachedVictim) {
-      killerWhereClause.killerId = cachedVictim.pubgId;
-    } else {
-      killerWhereClause.killerName = nickname;
-    }
-    if (cachedKiller) {
-      killerWhereClause.victimId = cachedKiller.pubgId;
-    } else {
-      killerWhereClause.victimName = killerNickname;
-    }
-
     const [deathEvents, killEvents] = await Promise.all([
-      this.prisma.killEvent.findMany({
-        where: victimWhereClause,
-        include: {
-          match: {
-            select: {
-              playedAt: true,
-              mapName: true,
-              gameMode: true,
-            },
-          },
-        },
-        orderBy: { timestamp: 'desc' },
-      }),
-      this.prisma.killEvent.findMany({
-        where: killerWhereClause,
-      }),
+      this.killEventService.findByKillerOrName(
+        cachedKiller?.pubgId ?? null,
+        cachedKiller ? null : killerNickname,
+        cachedVictim?.pubgId ?? null,
+        cachedVictim ? null : nickname,
+      ),
+      this.killEventService.findByKillerOrName(
+        cachedVictim?.pubgId ?? null,
+        cachedVictim ? null : nickname,
+        cachedKiller?.pubgId ?? null,
+        cachedKiller ? null : killerNickname,
+      ),
     ]);
 
     const killDetails = deathEvents.map(event => ({
@@ -265,13 +209,7 @@ export class DeathNoteService {
     const matchMap = new Map<string, MatchGroup>();
     const matchIds = [...new Set(killEvents.map(e => e.matchId))];
 
-    const userMatches = await this.prisma.userMatch.findMany({
-      where: {
-        userId,
-        matchId: { in: matchIds },
-      },
-      select: { matchId: true, ranking: true, won: true },
-    });
+    const userMatches = await this.userMatchService.findMatchesByUserIdAndMatchIds(userId, matchIds);
 
     const rankingMap = new Map<string, number | null>();
     const wonMap = new Map<string, boolean>();
@@ -309,7 +247,9 @@ export class DeathNoteService {
           gameMode: event.match?.gameMode || null,
           weaponId: event.weaponId,
           victimName: event.victimName,
+          victimId: event.victimId,
           killerName: event.killerName,
+          killerId: event.killerId,
           distance: event.distance,
           isHeadshot: event.isHeadshot,
           timestamp: event.timestamp,
@@ -323,7 +263,9 @@ export class DeathNoteService {
           gameMode: event.match?.gameMode || null,
           weaponId: event.weaponId,
           victimName: event.victimName,
+          victimId: event.victimId,
           killerName: event.killerName,
+          killerId: event.killerId,
           distance: event.distance,
           isHeadshot: event.isHeadshot,
           timestamp: event.timestamp,
@@ -402,9 +344,6 @@ export class DeathNoteService {
       return {
         userId: '',
         nickname,
-        totalMatches: 0,
-        totalKills: 0,
-        totalDeaths: 0,
         totalDays: 0,
         startDate: null,
         endDate: null,
@@ -453,9 +392,6 @@ export class DeathNoteService {
       return {
         userId,
         nickname: cachedUser.nickname,
-        totalMatches: 0,
-        totalKills: 0,
-        totalDeaths: 0,
         totalDays: 0,
         startDate: null,
         endDate: null,
@@ -472,30 +408,7 @@ export class DeathNoteService {
     const startDateTime = new Date(startDate + 'T00:00:00.000Z');
     const endDateTime = new Date(endDate + 'T23:59:59.999Z');
 
-    const killEvents = await this.prisma.killEvent.findMany({
-      where: {
-        OR: [
-          { killerId: userId },
-          { victimId: userId },
-        ],
-        match: {
-          playedAt: {
-            gte: startDateTime,
-            lte: endDateTime,
-          },
-        },
-      },
-      include: {
-        match: {
-          select: {
-            playedAt: true,
-            mapName: true,
-            gameMode: true,
-          },
-        },
-      },
-      orderBy: { timestamp: 'desc' },
-    });
+    const killEvents = await this.killEventService.findByUserIdAndDateRange(userId, startDateTime, endDateTime);
 
     const totalKills = killEvents.filter(e => e.killerId === userId).length;
     const totalDeaths = killEvents.filter(e => e.victimId === userId).length;
@@ -520,9 +433,6 @@ export class DeathNoteService {
     const result: DeathNotePaginatedResponse = {
       userId,
       nickname: cachedUser.nickname,
-      totalMatches: pageMatches.length,
-      totalKills,
-      totalDeaths,
       totalDays,
       startDate: globalStartDate,
       endDate: globalEndDate,
@@ -540,9 +450,9 @@ export class DeathNoteService {
   /**
    * 获取有数据的日期列表（轻量级，用于日历绿点显示）
    */
-  async getAvailableDates(nickname: string): Promise<string[]> {
+  async getAvailableDates(nickname: string): Promise<{ dates: string[]; winDates: string[] }> {
     const cacheKey = `deathnote:${nickname}:dates`;
-    const cached = await cache.get<string[]>(cacheKey);
+    const cached = await cache.get<{ dates: string[]; winDates: string[] }>(cacheKey);
     if (cached) {
       return cached;
     }
@@ -552,7 +462,7 @@ export class DeathNoteService {
     });
 
     if (!cachedUser) {
-      return [];
+      return { dates: [], winDates: [] };
     }
 
     const userId = cachedUser.pubgId;
@@ -568,7 +478,7 @@ export class DeathNoteService {
           },
         },
       },
-      select: { playedAt: true },
+      select: { playedAt: true, id: true },
       orderBy: { playedAt: 'desc' },
       distinct: ['playedAt'],
     });
@@ -579,9 +489,20 @@ export class DeathNoteService {
         .map(m => new Date(m.playedAt!).toISOString().split('T')[0])
     )].sort((a, b) => b.localeCompare(a));
 
-    await cache.set(cacheKey, allDates, this.CACHE_TTL);
+    const matchIds = matchDates.map(m => m.id);
+    const userMatches = await this.userMatchService.findMatchesByUserIdAndMatchIds(userId, matchIds);
+    const winMatchIds = userMatches.filter(um => um.won).map(um => um.matchId);
 
-    return allDates;
+    const winDates = [...new Set(
+      matchDates
+        .filter(m => winMatchIds.includes(m.id) && m.playedAt)
+        .map(m => new Date(m.playedAt!).toISOString().split('T')[0])
+    )].sort((a, b) => b.localeCompare(a));
+
+    const result = { dates: allDates, winDates };
+    await cache.set(cacheKey, result, this.CACHE_TTL);
+
+    return result;
   }
 
   /**
@@ -606,9 +527,6 @@ export class DeathNoteService {
       return {
         userId: '',
         nickname,
-        totalMatches: 0,
-        totalKills: 0,
-        totalDeaths: 0,
         totalDays: 0,
         startDate: null,
         endDate: null,
@@ -625,30 +543,7 @@ export class DeathNoteService {
     const startDateTime = new Date(date + 'T00:00:00.000Z');
     const endDateTime = new Date(date + 'T23:59:59.999Z');
 
-    const killEvents = await this.prisma.killEvent.findMany({
-      where: {
-        OR: [
-          { killerId: userId },
-          { victimId: userId },
-        ],
-        match: {
-          playedAt: {
-            gte: startDateTime,
-            lte: endDateTime,
-          },
-        },
-      },
-      include: {
-        match: {
-          select: {
-            playedAt: true,
-            mapName: true,
-            gameMode: true,
-          },
-        },
-      },
-      orderBy: { timestamp: 'desc' },
-    });
+    const killEvents = await this.killEventService.findByUserIdAndDateRange(userId, startDateTime, endDateTime);
 
     const totalKills = killEvents.filter(e => e.killerId === userId).length;
     const totalDeaths = killEvents.filter(e => e.victimId === userId).length;
@@ -697,9 +592,6 @@ export class DeathNoteService {
     const result: DeathNotePaginatedResponse = {
       userId,
       nickname: cachedUser.nickname,
-      totalMatches: dayMatches.length,
-      totalKills,
-      totalDeaths,
       totalDays: allDates.length,
       startDate,
       endDate,
@@ -760,68 +652,13 @@ export class DeathNoteService {
 
       const targetUserId = targetUser.pubgId;
 
-      killedByEvents = await this.prisma.killEvent.findMany({
-        where: {
-          victimId: userId,
-          killerId: targetUserId,
-          match: {
-            gameMode: {
-              not: { contains: 'tdm' },
-            },
-          },
-        },
-        select: {
-          killerId: true,
-          killerName: true,
-        },
-      });
+      killedByEvents = await this.killEventService.findKilledByUser(userId, targetUserId);
 
-      myKillEvents = await this.prisma.killEvent.findMany({
-        where: {
-          killerId: userId,
-          victimId: targetUserId,
-          match: {
-            gameMode: {
-              not: { contains: 'tdm' },
-            },
-          },
-        },
-        select: {
-          victimId: true,
-          victimName: true,
-        },
-      });
+      myKillEvents = await this.killEventService.findKillsByUser(userId, targetUserId);
     } else {
-      killedByEvents = await this.prisma.killEvent.findMany({
-        where: {
-          victimId: userId,
-          killerId: { not: null },
-          match: {
-            gameMode: {
-              not: { contains: 'tdm' },
-            },
-          },
-        },
-        select: {
-          killerId: true,
-          killerName: true,
-        },
-      });
+      killedByEvents = await this.killEventService.findKilledByUser(userId);
 
-      myKillEvents = await this.prisma.killEvent.findMany({
-        where: {
-          killerId: userId,
-          match: {
-            gameMode: {
-              not: { contains: 'tdm' },
-            },
-          },
-        },
-        select: {
-          victimId: true,
-          victimName: true,
-        },
-      });
+      myKillEvents = await this.killEventService.findKillsByUser(userId);
     }
 
     const killsByThemMap = new Map<string, { name: string; count: number }>();
@@ -860,13 +697,13 @@ export class DeathNoteService {
       }
     });
 
-    snipers.sort((a, b) => b.killsByThem - a.killsByThem);
+    snipers.sort((a, b) => b.totalInteractions - a.totalInteractions);
 
     const result: SniperQueryResponse = {
       userId,
       nickname: cachedUser.nickname,
       totalSnipers: snipers.length,
-      snipers: snipers.slice(0, 5),
+      snipers,
     };
 
     await cache.set(cacheKey, result, this.CACHE_TTL);

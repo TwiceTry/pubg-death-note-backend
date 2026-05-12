@@ -10,6 +10,8 @@ import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { TaskService } from '../task/task.service';
 import { cache } from '../common/cache.utils';
 import { ExecutableTask, getCurrentTaskContext } from '../task/task.decorator';
+import { DeathNoteGenerationService } from './death-note-generation.service';
+import { UserMatchService } from './user-match.service';
 
 interface MatchPaths {
   matchDir: string;
@@ -29,6 +31,8 @@ export class PubgMatchService {
     private pubgApi: PubgApiService,
     private configService: ConfigService,
     private taskService: TaskService,
+    private generationService: DeathNoteGenerationService,
+    private userMatchService: UserMatchService,
     private logger: DualOutputLoggerService,
   ) {
     const gameDataDir = this.configService.get<string>('GAME_DATA_DIR', './game-data');
@@ -464,11 +468,7 @@ export class PubgMatchService {
 
     let newUserMatches = 0;
     for (const [userId, { ranking, won }] of matchedUsers) {
-      await this.prisma.userMatch.upsert({
-        where: { userId_matchId: { userId, matchId } },
-        update: { ranking, won },
-        create: { userId, matchId, ranking, won },
-      });
+      await this.userMatchService.upsert(userId, matchId, ranking, won);
       newUserMatches++;
     }
 
@@ -510,11 +510,8 @@ export class PubgMatchService {
       return { success: true, message: 'No local match files found', totalMatches: 0, processedMatches: 0, newMatches: 0, updatedMatches: 0, newUserMatches: 0, newKillEvents: 0 };
     }
 
-    const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
-      where: { isGenerated: true },
-      select: { userId: true },
-    });
-    const deathNoteUserIds = new Set(deathNoteUsers.map(u => u.userId));
+    const deathNoteUsers = await this.generationService.findAll();
+    const deathNoteUserIds = new Set(deathNoteUsers.filter(u => u.isGenerated).map(u => u.userId));
 
     let processedMatches = 0;
     let newMatches = 0;
@@ -562,12 +559,16 @@ export class PubgMatchService {
    * 清除所有已生成死亡笔记的用户的缓存
    */
   private async invalidateDeathNoteCache(): Promise<void> {
-    const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
-      where: { isGenerated: true },
-      select: { userId: true },
-    });
+    const deathNoteUsers = await this.generationService.findAll();
     for (const user of deathNoteUsers) {
-      await cache.invalidatePattern(`deathnote:${user.userId}:`);
+      if (!user.isGenerated) continue;
+      const nickname = await this.prisma.user.findFirst({
+        where: { pubgId: user.userId },
+        select: { nickname: true },
+      });
+      if (nickname) {
+        await cache.invalidatePattern(`deathnote:${nickname.nickname}:`);
+      }
     }
   }
 
@@ -698,12 +699,8 @@ export class PubgMatchService {
     }),
   })
   async reparseAllTelemetryWithProgress(): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; successMatches: number; failedMatches: number }> {
-    const deathNoteUsers = await this.prisma.deathNoteGeneration.findMany({
-      where: { isGenerated: true },
-      select: { userId: true },
-    });
-
-    const userIds = deathNoteUsers.map(u => u.userId);
+    const deathNoteUsers = await this.generationService.findAll();
+    const userIds = deathNoteUsers.filter(u => u.isGenerated).map(u => u.userId);
     const playersMatches = await this.getPlayersMatchesBatch(userIds);
 
     const allMatchIds = new Set<string>();

@@ -146,4 +146,15 @@ export class PubgUserService {
     // 检查上次更新时间是否超过缓存过期时间（1天）
     return Date.now() - lastUpdated.getTime() > USER_CACHE_EXPIRY_MS;
   }
+
+  /**
+   * 根据昵称获取用户 ID（仅查询数据库）
+   */
+  async getUserIdByNickname(nickname: string): Promise<string | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { nickname },
+      select: { pubgId: true },
+    });
+    return user?.pubgId ?? null;
+  }
 }

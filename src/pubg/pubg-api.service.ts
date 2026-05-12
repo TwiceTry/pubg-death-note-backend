@@ -5,6 +5,8 @@ import axios from 'axios';
 import Bottleneck from 'bottleneck';
 import { PrismaService } from '../prisma/prisma.service';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
+import { ApiStatsService } from './api-stats.service';
+import { ApiRequestDetailService } from './api-request-detail.service';
 import {
   PubgMatchResponse,
   PubgAssetResource,
@@ -33,6 +35,8 @@ export class PubgApiService implements OnModuleInit {
     private configService: ConfigService,
     private prisma: PrismaService,
     private logger: DualOutputLoggerService,
+    private apiStatsService: ApiStatsService,
+    private apiRequestDetailService: ApiRequestDetailService,
   ) {
     this.initializeApiTokens();
   }
@@ -133,11 +137,15 @@ export class PubgApiService implements OnModuleInit {
     }
   }
 
-  private async makeApiRequest<T>(url: string, config: any, retryCount: number): Promise<any> {
+  private async makeApiRequest<T>(url: string, config: any, retryCount: number, endpoint: string): Promise<any> {
     const tokenConfig = this.getNextApiToken();
+    const maskedToken = tokenConfig.token.substring(0, 8) + '...';
     
     return tokenConfig.limiter.schedule(async () => {
       let attempts = 0;
+      const startTime = Date.now();
+      let rateLimited = false;
+      
       while (attempts < retryCount) {
         try {
           if (!config.headers) {
@@ -146,13 +154,42 @@ export class PubgApiService implements OnModuleInit {
           config.headers.Authorization = `Bearer ${tokenConfig.token}`;
           
           const response = await axios.get<T>(url, config);
+          const responseTime = Date.now() - startTime;
+          
+          let responseData: string | undefined;
+          if (endpoint === 'match') {
+            responseData = JSON.stringify({ matchId: (response.data as any)?.data?.id });
+          } else if (endpoint === 'telemetry') {
+            responseData = JSON.stringify({ telemetrySize: (response.data as any)?.length || 0 });
+          } else {
+            responseData = JSON.stringify(response.data).substring(0, 1000);
+          }
+          
+          await Promise.all([
+            this.apiStatsService.recordRequest(endpoint, responseTime, true, rateLimited),
+            this.apiRequestDetailService.recordRequest(
+              url, 'GET', maskedToken, responseTime, true, endpoint, undefined, responseData
+            ),
+          ]);
+          
           return response;
         } catch (error) {
           attempts++;
           if (attempts >= retryCount) {
+            const responseTime = Date.now() - startTime;
+            const errorMessage = error.response ? `${error.response.status} ${error.response.statusText}` : error.message;
+            
+            await Promise.all([
+              this.apiStatsService.recordRequest(endpoint, responseTime, false, rateLimited),
+              this.apiRequestDetailService.recordRequest(
+                url, 'GET', maskedToken, responseTime, false, endpoint, errorMessage
+              ),
+            ]);
+            
             throw error;
           }
           this.logger.warn(`API request failed, retrying (${attempts}/${retryCount})...`);
+          rateLimited = true;
           await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
         } finally {
           await this.updateLastRequestTime();
@@ -162,14 +199,39 @@ export class PubgApiService implements OnModuleInit {
     });
   }
 
-  private async makeDirectRequest<T>(url: string, config: any, retryCount: number): Promise<any> {
+  private async makeDirectRequest<T>(url: string, config: any, retryCount: number, endpoint: string): Promise<any> {
     let attempts = 0;
+    const startTime = Date.now();
+    
     while (attempts < retryCount) {
       try {
-        return await axios.get<T>(url, config);
+        const response = await axios.get<T>(url, config);
+        const responseTime = Date.now() - startTime;
+        
+        let responseData: string | undefined;
+        if (endpoint === 'match') {
+          responseData = JSON.stringify({ matchId: (response.data as any)?.data?.id });
+        } else if (endpoint === 'telemetry') {
+          responseData = JSON.stringify({ telemetrySize: (response.data as any)?.length || 0 });
+        } else {
+          responseData = JSON.stringify(response.data).substring(0, 1000);
+        }
+        
+        await this.apiRequestDetailService.recordRequest(
+          url, 'GET', 'direct', responseTime, true, endpoint, undefined, responseData
+        );
+        
+        return response;
       } catch (error) {
         attempts++;
         if (attempts >= retryCount) {
+          const responseTime = Date.now() - startTime;
+          const errorMessage = error.response ? `${error.response.status} ${error.response.statusText}` : error.message;
+          
+          await this.apiRequestDetailService.recordRequest(
+            url, 'GET', 'direct', responseTime, false, endpoint, errorMessage
+          );
+          
           throw error;
         }
         this.logger.warn(`Direct request failed, retrying (${attempts}/${retryCount})...`);
@@ -189,7 +251,7 @@ export class PubgApiService implements OnModuleInit {
     const response = await this.makeDirectRequest<PubgMatchResponse>(matchUrl, {
       headers: { Accept: 'application/vnd.api+json' },
       timeout,
-    }, retryCount);
+    }, retryCount, 'match');
 
     return {
       data: response.data.data,
@@ -206,7 +268,7 @@ export class PubgApiService implements OnModuleInit {
       maxBodyLength: Infinity,
       headers: { 'Accept-Encoding': 'gzip,deflate,compress' },
       timeout,
-    }, retryCount);
+    }, retryCount, 'telemetry');
 
     return response.data;
   }
@@ -239,7 +301,7 @@ export class PubgApiService implements OnModuleInit {
         headers: { Accept: 'application/vnd.api+json' },
         params: { 'filter[playerNames]': batch.join(',') },
         timeout,
-      }, retryCount);
+      }, retryCount, 'player');
 
       if (response.data.data && response.data.data.length > 0) {
         const players = response.data.data.map((user: any) => ({
@@ -287,7 +349,7 @@ export class PubgApiService implements OnModuleInit {
     const response = await this.makeApiRequest<any>(userUrl, {
       headers: { Accept: 'application/vnd.api+json' },
       timeout,
-    }, retryCount);
+    }, retryCount, 'player');
 
     // 单个用户查询返回的是单个对象，不是数组
     const user = response.data.data;
@@ -329,7 +391,7 @@ export class PubgApiService implements OnModuleInit {
         headers: { Accept: 'application/vnd.api+json' },
         params: { 'filter[playerIds]': batch.join(',') },
         timeout,
-      }, retryCount);
+      }, retryCount, 'player');
 
       if (response.data.data && response.data.data.length > 0) {
         const players = response.data.data.map((user: any) => ({
@@ -356,7 +418,7 @@ export class PubgApiService implements OnModuleInit {
     const response = await this.makeApiRequest<any>(seasonsUrl, {
       headers: { Accept: 'application/vnd.api+json' },
       timeout,
-    }, retryCount);
+    }, retryCount, 'season');
 
     const seasons = response.data.data.map((s: any) => ({
       id: s.id,

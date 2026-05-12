@@ -82,7 +82,7 @@ model UserMatch {
   @@map("user_matches")
 }
 
-// API 请求日志表：存储 API 请求的最后时间
+// API 请求日志表：存储 API 请求的最后时间（用于限流）
 model ApiRequestLog {
   id          Int      @id @default(autoincrement())
   requestType String   @unique // 例如："user_match_history", "user_search"
@@ -91,6 +91,43 @@ model ApiRequestLog {
   updatedAt   DateTime @updatedAt
   
   @@map("api_request_logs")
+}
+
+// API 请求详细记录表：记录每次请求的详细信息
+model ApiRequestDetail {
+  id           Int      @id @default(autoincrement())
+  requestTime  DateTime @default(now()) // 请求发起时间
+  url          String // 请求 URL
+  method       String   @default("GET") // 请求方式
+  tokenUsed    String   // 使用的 token（部分隐藏）
+  responseTime Int     // 响应时间（毫秒）
+  success      Boolean  // 是否成功
+  error        String?  // 失败时的错误信息
+  responseData String?  // 成功返回的数据（大响应只记录关键信息）
+  endpoint     String   // 端点标识：match, player, season, telemetry
+  
+  @@index([requestTime])
+  @@index([endpoint])
+  @@index([success])
+  @@map("api_request_details")
+}
+
+// API 统计表：记录 PUBG API 请求的统计信息
+model ApiStats {
+  id            Int      @id @default(autoincrement())
+  endpoint      String   // API 端点标识，如 "match", "player", "season"
+  totalRequests Int      @default(0) // 总请求次数
+  successCount  Int      @default(0) // 成功次数
+  failureCount  Int      @default(0) // 失败次数
+  rateLimitCount Int     @default(0) // 触发限流次数
+  totalResponseTime Float @default(0) // 总响应时间（毫秒）
+  avgResponseTime Float @default(0) // 平均响应时间（毫秒）
+  lastRequestAt DateTime? // 最后请求时间
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@unique([endpoint])
+  @@map("api_stats")
 }
 
 // 赛季表：存储 PUBG 赛季信息（建议一个月刷新一次）

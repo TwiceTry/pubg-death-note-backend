@@ -30,6 +30,11 @@ import { TaskService, TaskResult } from './task.service';
 // 类型定义
 // ============================================================
 
+/** 异步任务创建响应 */
+export interface AsyncTaskResponse {
+  taskId: string;
+}
+
 /**
  * 任务执行上下文
  * 在 @ExecutableTask 装饰的方法及其所有下游调用中可用

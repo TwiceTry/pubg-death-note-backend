@@ -57,6 +57,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.prisma.scheduledTaskConfig;
   }
 
+  get apiStats() {
+    return this.prisma.apiStats;
+  }
+
+  get apiRequestDetail() {
+    return this.prisma.apiRequestDetail;
+  }
+
   get $transaction() {
     return this.prisma.$transaction.bind(this.prisma);
   }

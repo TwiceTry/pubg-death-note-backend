@@ -89,7 +89,9 @@ export interface MatchKillDetail {
   gameMode: string | null;
   weaponId: string;
   victimName: string;
+  victimId: string;
   killerName: string;
+  killerId: string | null;
   distance: number;
   isHeadshot: boolean;
   timestamp: Date;
@@ -118,9 +120,6 @@ export interface DayMatchGroup {
 export interface DeathNotePaginatedResponse {
   userId: string;
   nickname: string;
-  totalMatches: number;
-  totalKills: number;
-  totalDeaths: number;
   totalDays: number;
   startDate: string | null;
   endDate: string | null;

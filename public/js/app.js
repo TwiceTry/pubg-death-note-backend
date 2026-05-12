@@ -3,6 +3,7 @@ var currentDeathNoteNickname = '';
 var currentCalendarDate = new Date();
 var selectedDate = null;
 var availableDates = [];
+var winDates = [];
 var allDaysData = [];
 var pageNickname = '';
 var calendarExpanded = false;
@@ -146,6 +147,7 @@ function renderCalendar() {
       if (d.getTime() === today.getTime()) classes += ' today';
       if (selectedDate === dateStr) classes += ' selected';
       if (availableDates.indexOf(dateStr) !== -1) classes += ' has-kills';
+      if (winDates.indexOf(dateStr) !== -1) classes += ' has-win';
 
       html += '<div class="' + classes + '" onclick="selectDate(\'' + dateStr + '\')">' + d.getDate() + '</div>';
     }
@@ -169,6 +171,7 @@ function renderCalendar() {
       if (dateObj.getTime() === today.getTime()) classes += ' today';
       if (selectedDate === dateStr) classes += ' selected';
       if (availableDates.indexOf(dateStr) !== -1) classes += ' has-kills';
+      if (winDates.indexOf(dateStr) !== -1) classes += ' has-win';
 
       html += '<div class="' + classes + '" onclick="selectDate(\'' + dateStr + '\')">' + day + '</div>';
     }
@@ -290,6 +293,30 @@ function buildStatsHtml(data, dateRange) {
       '</div>';
   }
 
+  var totalKills = 0;
+  var totalDeaths = 0;
+  var totalMatches = 0;
+  var totalWins = 0;
+  var totalAIKills = 0;
+
+  if (data.days && data.days.length > 0) {
+    data.days.forEach(function (day) {
+      totalMatches += day.matches.length;
+      totalKills += day.kills;
+      totalDeaths += day.deaths;
+      day.matches.forEach(function (match) {
+        if (match.won) totalWins++;
+        match.killDetails.forEach(function (kill) {
+          if (kill.victimId && kill.victimId.toLowerCase().startsWith('ai')) {
+            totalAIKills++;
+          }
+        });
+      });
+    });
+  }
+
+  var kdRatio = totalDeaths > 0 ? (totalKills / totalDeaths).toFixed(2) : totalKills.toFixed(2);
+
   return rangeHtml +
     '<div class="stat-row">' +
     '<span class="stat-label">玩家</span>' +
@@ -297,15 +324,27 @@ function buildStatsHtml(data, dateRange) {
     '</div>' +
     '<div class="stat-row">' +
     '<span class="stat-label">总击杀</span>' +
-    '<span class="stat-value" style="color:#2ed573">' + data.totalKills + '</span>' +
+    '<span class="stat-value" style="color:#2ed573">' + totalKills + '</span>' +
     '</div>' +
     '<div class="stat-row">' +
     '<span class="stat-label">总死亡</span>' +
-    '<span class="stat-value" style="color:#ff4757">' + data.totalDeaths + '</span>' +
+    '<span class="stat-value" style="color:#ff4757">' + totalDeaths + '</span>' +
+    '</div>' +
+    '<div class="stat-row">' +
+    '<span class="stat-label">K/D</span>' +
+    '<span class="stat-value" style="color:#3498db">' + kdRatio + '</span>' +
     '</div>' +
     '<div class="stat-row">' +
     '<span class="stat-label">比赛场次</span>' +
-    '<span class="stat-value">' + data.totalMatches + '</span>' +
+    '<span class="stat-value">' + totalMatches + '</span>' +
+    '</div>' +
+    '<div class="stat-row">' +
+    '<span class="stat-label">吃鸡数</span>' +
+    '<span class="stat-value" style="color:#ffd700">' + totalWins + '</span>' +
+    '</div>' +
+    '<div class="stat-row">' +
+    '<span class="stat-label">击杀AI玩家</span>' +
+    '<span class="stat-value" style="color:#9b59b6">' + totalAIKills + '</span>' +
     '</div>';
 }
 
@@ -334,16 +373,22 @@ function filterByDate(dateStr) {
   renderDays(filteredDays, dateStr);
 }
 
+function isAIPlayer(playerId) {
+  return playerId && playerId.toLowerCase().startsWith('ai');
+}
+
 function renderDays(days, title) {
   var daysHtml = days.map(function (day) {
     var matchesHtml = day.matches.map(function (match, idx) {
       var killsHtml = '';
       if (match.killDetails.length > 0) {
         killsHtml = '<div class="kill-section-title">击杀</div>' + match.killDetails.map(function (kill) {
+          var aiBadge = isAIPlayer(kill.victimId) ? '<span class="ai-badge">AI</span>' : '';
           return '<div class="kill-item">' +
             '<div class="kill-left">' +
             '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
             '<span class="kill-victim">' + escapeHtml(kill.victimName) + '</span>' +
+            aiBadge +
             '</div>' +
             '<div class="kill-right">' +
             (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
@@ -356,10 +401,12 @@ function renderDays(days, title) {
       var deathsHtml = '';
       if (match.deathDetails.length > 0) {
         deathsHtml = '<div class="death-section-title">被击杀</div>' + match.deathDetails.map(function (death) {
+          var aiBadge = isAIPlayer(death.killerId) ? '<span class="ai-badge">AI</span>' : '';
           return '<div class="kill-item death-item">' +
             '<div class="kill-left">' +
             '<span class="kill-weapon">' + escapeHtml(formatWeapon(death.weaponId)) + '</span>' +
             '<span class="kill-victim">被 <strong>' + escapeHtml(death.killerName) + '</strong> 击杀</span>' +
+            aiBadge +
             '</div>' +
             '<div class="kill-right">' +
             (death.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
@@ -620,10 +667,10 @@ async function querySniperForVictim() {
       return '<div class="sniper-item">' +
         '<div class="sniper-rank">#' + (idx + 1) + '</div>' +
         '<div class="sniper-info">' +
-        '<div class="sniper-name">' + escapeHtml(sniper.killerName) + '</div>' +
+        '<div class="sniper-name"><a href="javascript:void(0)" onclick="showSniperInteraction(\'' + escapeHtml(sniper.killerName) + '\')" class="sniper-link">' + escapeHtml(sniper.killerName) + '</a></div>' +
         '<div class="sniper-stats">' +
-        '<span class="sniper-kills-by-them">被击杀: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
-        '<span class="sniper-kills-by-me">击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-them">对方击杀你: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-me">你击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
         '<span class="sniper-total">总互动: <strong>' + sniper.totalInteractions + '</strong> 次</span>' +
         '</div>' +
         '</div>' +
@@ -639,6 +686,96 @@ async function querySniperForVictim() {
     showError('result-victim', error.message);
   } finally {
     btn.disabled = false;
+  }
+}
+
+async function showSniperInteraction(sniperNickname) {
+  if (!currentDeathNoteNickname) {
+    alert('请先查询死亡笔记');
+    return;
+  }
+
+  showLoading('result-victim');
+
+  try {
+    var url1 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(currentDeathNoteNickname) + '/victim/' + encodeURIComponent(sniperNickname);
+    var url2 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(currentDeathNoteNickname) + '/killed-by/' + encodeURIComponent(sniperNickname);
+
+    var [response1, response2] = await Promise.all([
+      fetch(url1),
+      fetch(url2)
+    ]);
+
+    var data1 = await response1.json();
+    var data2 = await response2.json();
+
+    if (!response1.ok || !data1.success || !response2.ok || !data2.success) {
+      showError('result-victim', '查询互动记录失败');
+      return;
+    }
+
+    var myKillsThem = data1.totalKills || 0;
+    var theyKilledMe = data2.totalDeaths || 0;
+
+    var html = '<div class="vs-header">' +
+      '<div class="vs-player">' + escapeHtml(currentDeathNoteNickname) + '</div>' +
+      '<div class="vs-divider">VS</div>' +
+      '<div class="vs-player">' + escapeHtml(sniperNickname) + '</div>' +
+      '</div>' +
+      '<div class="vs-stats">' +
+      '<div class="vs-stat">' +
+      '<div class="vs-stat-value kills">' + myKillsThem + '</div>' +
+      '<div class="vs-stat-label">我击杀对方</div>' +
+      '</div>' +
+      '<div class="vs-stat">' +
+      '<div class="vs-stat-value deaths">' + theyKilledMe + '</div>' +
+      '<div class="vs-stat-label">对方击杀我</div>' +
+      '</div>' +
+      '</div>';
+
+    if (myKillsThem > 0 && data1.killDetails && data1.killDetails.length > 0) {
+      var myKillsHtml = data1.killDetails.map(function (kill) {
+        return '<div class="kill-item">' +
+          '<div class="kill-left">' +
+          '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
+          '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
+          '</div>' +
+          '<div class="kill-right">' +
+          (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
+          '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+
+      html += '<div class="vs-section">' +
+        '<div class="vs-section-title kills">我击杀 ' + escapeHtml(sniperNickname) + ' (' + myKillsThem + '次)</div>' +
+        myKillsHtml +
+        '</div>';
+    }
+
+    if (theyKilledMe > 0 && data2.killDetails && data2.killDetails.length > 0) {
+      var theirKillsHtml = data2.killDetails.map(function (kill) {
+        return '<div class="kill-item death-item">' +
+          '<div class="kill-left">' +
+          '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
+          '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
+          '</div>' +
+          '<div class="kill-right">' +
+          (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
+          '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+
+      html += '<div class="vs-section">' +
+        '<div class="vs-section-title deaths">' + escapeHtml(sniperNickname) + ' 击杀我 (' + theyKilledMe + '次)</div>' +
+        theirKillsHtml +
+        '</div>';
+    }
+
+    showSuccess('result-victim', '<div style="margin-top: 15px;">' + html + '</div>');
+  } catch (error) {
+    showError('result-victim', error.message);
   }
 }
 
@@ -695,6 +832,9 @@ async function queryDeathNote(page) {
 
     allDaysData = data.days;
     availableDates = data.days.map(function (day) { return day.date; });
+    winDates = data.days.filter(function (day) {
+      return day.matches.some(function (match) { return match.won; });
+    }).map(function (day) { return day.date; });
     allStatsData = data;
 
     var today = new Date();
@@ -717,6 +857,8 @@ async function queryDeathNote(page) {
     var shareLink = window.location.origin + '/n/' + encodeURIComponent(nickname);
     document.getElementById('shareLinkUrl').textContent = shareLink;
     document.getElementById('shareLink').style.display = 'block';
+
+    window.history.pushState({ nickname: nickname }, '', '/n/' + encodeURIComponent(nickname));
 
     renderDays(data.days, '');
 
@@ -819,6 +961,7 @@ async function fetchAvailableDates(nickname) {
 
     if (response.ok && data.success) {
       availableDates = data.dates;
+      winDates = data.winDates || [];
       renderCalendar();
       
       if (availableDates.length > 0 && !selectedDate) {

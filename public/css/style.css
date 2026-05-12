@@ -295,6 +295,16 @@ input[type="date"] {
   border-radius: 50%;
 }
 
+.calendar-day.has-win::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  background: #ffd700;
+  border-radius: 50%;
+}
+
 .calendar-day.other-month {
   opacity: 0.3;
   cursor: default;
@@ -724,6 +734,18 @@ input[type="date"] {
   border-radius: 2px;
   font-size: 10px;
   font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ai-badge {
+  background: #9b59b6;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-left: 6px;
 }
 
 .kill-distance {
@@ -937,6 +959,18 @@ input[type="date"] {
   font-weight: 700;
   color: #e0e0e0;
   margin-bottom: 6px;
+}
+
+.sniper-link {
+  color: #ffa500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.sniper-link:hover {
+  color: #ffcc00;
+  text-decoration: underline;
 }
 
 .sniper-stats {

@@ -18,6 +18,9 @@ import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { AdminAuthGuard } from '../common/admin-auth.guard';
 import { validateNickname, validateUserId, validateMatchId } from '../common/validation.utils';
 
+/** 异步任务装饰器返回类型 */
+type AsyncTaskResult = { taskId: string };
+
 @UseGuards(AdminAuthGuard)
 @Controller('pubg/tasks')
 export class PubgTaskController {
@@ -75,9 +78,9 @@ export class PubgTaskController {
       throw new HttpException('User already has a running task', HttpStatus.CONFLICT);
     }
 
-    const result: any = await (this.pubgMatchService as any).reparseUserTelemetryWithProgress(userId);
+    const result = await this.pubgMatchService.reparseUserTelemetryWithProgress(userId) as unknown as AsyncTaskResult;
 
-    return this.taskCreatedResponse(result.taskId, 'User match reparse task created');
+    return this.taskCreatedResponse(result.taskId, 'User telemetry reparse task created');
   }
 
   /**
@@ -86,7 +89,7 @@ export class PubgTaskController {
    */
   @Post('reparse/all')
   async createGlobalReparseTask(): Promise<Record<string, any>> {
-    const result: any = await (this.pubgMatchService as any).reparseAllTelemetryWithProgress();
+    const result = await this.pubgMatchService.reparseAllTelemetryWithProgress() as unknown as AsyncTaskResult;
 
     return this.taskCreatedResponse(result.taskId, 'All match telemetry reparse task created');
   }
@@ -99,9 +102,9 @@ export class PubgTaskController {
   async reparseMatchTelemetry(@Param('matchId') matchId: string): Promise<Record<string, any>> {
     validateMatchId(matchId);
 
-    const result: any = await (this.pubgMatchService as any).reparseMatchTelemetry(matchId);
+    const result = await this.pubgMatchService.reparseMatchTelemetry(matchId) as unknown as AsyncTaskResult;
 
-    return this.taskCreatedResponse(result.taskId, 'Reparse task created');
+    return this.taskCreatedResponse(result.taskId, 'Match telemetry reparse task created');
   }
 
   // ============================================================
@@ -246,7 +249,7 @@ export class PubgTaskController {
       }
     }
 
-    const result: any = await (this.pubgDeathNoteService as any).requestDeathNoteGenerationByUserId(userInfo.id);
+    const result = await this.pubgDeathNoteService.requestDeathNoteGenerationByUserId(userInfo.id) as unknown as AsyncTaskResult;
 
     return this.taskCreatedResponse(result.taskId, 'Death note generation task created');
   }
@@ -275,7 +278,7 @@ export class PubgTaskController {
       throw new HttpException('User already has a running task', HttpStatus.CONFLICT);
     }
 
-    const result: any = await (this.pubgDeathNoteService as any).incrementalUpdate(userId);
+    const result = await this.pubgDeathNoteService.incrementalUpdate(userId) as unknown as AsyncTaskResult;
 
     return this.taskCreatedResponse(result.taskId, 'Death note incremental update task created');
   }
@@ -295,7 +298,7 @@ export class PubgTaskController {
       throw new HttpException(`Player "${nickname}" not found in database`, HttpStatus.BAD_REQUEST);
     }
 
-    const result: any = await (this.pubgDeathNoteService as any).forceGenerateDeathNote(userId);
+    const result = await this.pubgDeathNoteService.forceGenerateDeathNote(userId) as unknown as AsyncTaskResult;
 
     return this.taskCreatedResponse(result.taskId, 'Death note force generation task created');
   }
@@ -321,7 +324,7 @@ export class PubgTaskController {
    */
   @Post('sync-local-matches')
   async createSyncLocalMatchesTask(): Promise<Record<string, any>> {
-    const result: any = await (this.pubgMatchService as any).syncLocalMatches();
+    const result = await this.pubgMatchService.syncLocalMatches() as unknown as AsyncTaskResult;
 
     return this.taskCreatedResponse(result.taskId, 'Local match sync task created');
   }

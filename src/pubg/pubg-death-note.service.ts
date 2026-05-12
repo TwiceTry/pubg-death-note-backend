@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PubgMatchService } from './pubg-match.service';
+import { PubgUserService } from './pubg-user.service';
 import { TaskService, TaskStatus } from '../task/task.service';
 import { ExecutableTask, getCurrentTaskContext, isTaskCancelled } from '../task/task.decorator';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
@@ -9,11 +10,13 @@ import { DEATH_NOTE } from '../constants';
 import { cache } from '../common/cache.utils';
 import {
   DeathNoteGenerationResult,
-  DeathNoteStatusResult,
-  DeathNoteDataResult,
   FailedMatch,
 } from './pubg-death-note.types';
 import { MatchDataResult } from './pubg.interfaces';
+import { DeathNoteProgressService } from './pubg-death-note-progress.service';
+import { DeathNoteGenerationService } from './death-note-generation.service';
+import { UserMatchService, UserMatchInfo } from './user-match.service';
+import { KillEventService } from './kill-event.service';
 
 // ============================================================
 // 类型定义
@@ -22,11 +25,6 @@ import { MatchDataResult } from './pubg.interfaces';
 /** 任务结果中解析出的比赛数量信息 */
 interface TaskResultMatchInfo {
   matchCount?: number;
-}
-
-/** 预估用时计算缓存 */
-interface DurationEstimate {
-  avgTimePerMatch: number;
 }
 
 // ============================================================
@@ -38,7 +36,12 @@ export class PubgDeathNoteService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly matchService: PubgMatchService,
+    private readonly userService: PubgUserService,
     private readonly taskService: TaskService,
+    private readonly progressService: DeathNoteProgressService,
+    private readonly generationService: DeathNoteGenerationService,
+    private readonly userMatchService: UserMatchService,
+    private readonly killEventService: KillEventService,
     private readonly logger: DualOutputLoggerService,
   ) {}
 
@@ -48,7 +51,27 @@ export class PubgDeathNoteService {
 
   /**
    * 请求生成死亡笔记（通过用户 ID）
-   * 仅用于初次生成，已生成则抛出冲突异常
+   * 
+   * 功能说明：
+   * - 仅用于初次生成死亡笔记，已生成则抛出冲突异常
+   * - 通过 PUBG API 获取用户所有比赛历史
+   * - 逐场解析比赛遥测数据，提取击杀事件
+   * - 支持失败重试机制
+   * 
+   * 执行流程：
+   * 1. 检查生成记录状态，防止重复生成
+   * 2. 创建或重置生成记录（标记为生成中）
+   * 3. 获取用户比赛历史
+   * 4. 计算预估耗时
+   * 5. 处理所有比赛（解析遥测数据）
+   * 6. 重试失败的比赛
+   * 7. 完成生成标记
+   * 8. 清理进度记录
+   * 9. 清除缓存
+   * 
+   * @param userId - PUBG 玩家 ID
+   * @returns 生成结果，包含用户信息和处理统计
+   * @throws Error 当死亡笔记已生成时抛出冲突异常
    */
   @ExecutableTask({
     type: 'death_note_generate',
@@ -61,48 +84,49 @@ export class PubgDeathNoteService {
     }),
   })
   async requestDeathNoteGenerationByUserId(userId: string): Promise<DeathNoteGenerationResult> {
-    const generation = await this.prisma.deathNoteGeneration.findUnique({
-      where: { userId },
-    });
+    // 步骤 1：检查生成记录状态
+    const generation = await this.generationService.findByUserId(userId);
 
+    // 已生成则抛出冲突异常
     if (generation?.isGenerated) {
       throw new Error(`Death note already generated for user ${userId}`);
     }
 
+    // 步骤 2：创建或重置生成记录
     if (!generation) {
-      await this.prisma.deathNoteGeneration.create({
-        data: { userId, isGenerated: false },
-      });
+      await this.generationService.create(userId, { isGenerated: false });
     } else {
-      await this.prisma.deathNoteGeneration.update({
-        where: { userId },
-        data: { isGenerated: false },
-      });
+      await this.generationService.reset(userId);
     }
 
+    // 步骤 3：获取用户比赛历史
     const matchIds = await this.matchService.getUserMatchHistory(userId);
     this.logger.log(`Found ${matchIds.length} matches for user ${userId}`);
 
+    // 步骤 4：计算预估耗时
     const estimatedDuration = await this.calculateEstimatedDuration(matchIds.length);
 
+    // 步骤 5：处理所有比赛
     const failedMatches: FailedMatch[] = [];
     await this.processMatchList(userId, matchIds, failedMatches);
 
+    // 步骤 6：重试失败的比赛
     if (failedMatches.length > 0) {
       this.logger.log(`Retrying ${failedMatches.length} failed matches...`);
       await this.retryFailedMatches(userId, failedMatches);
     }
 
+    // 步骤 7：完成生成标记
     await this.finalizeGeneration(userId);
-    await this.cleanupProgress(userId);
 
+    // 步骤 8：清理进度记录
+    await this.progressService.cleanupProgress(userId);
+
+    // 步骤 9：清除缓存并返回结果
     const processedCount = matchIds.length - failedMatches.length;
     this.logger.log(`Death note generation completed for user ${userId}. Processed ${processedCount} matches.`);
 
-    // 清除该用户的死亡笔记缓存
-    await cache.invalidatePattern(`deathnote:${userId}:`);
-
-    const nickname = await this.getUserNickname(userId);
+    const nickname = await this.invalidateDeathNoteCache(userId);
 
     return {
       userId,
@@ -144,30 +168,25 @@ export class PubgDeathNoteService {
     }),
   })
   async forceGenerateDeathNote(userId: string): Promise<DeathNoteGenerationResult> {
-    // 步骤 1：记录当前用户所有比赛 ID
-    const existingUserMatches = await this.prisma.userMatch.findMany({
-      where: { userId },
-      select: { matchId: true },
-    });
-    const existingMatchIds = new Set(existingUserMatches.map(m => m.matchId));
+    // 步骤 1：记录当前用户所有比赛 ID 和完整信息
+    const existingMatches = await this.userMatchService.findAllByUserId(userId);
+    const existingMatchIds = new Set(existingMatches.map(m => m.matchId));
     this.logger.log(`User ${userId} has ${existingMatchIds.size} existing matches`);
 
     // 步骤 2：删除生成记录和用户比赛关联（重置状态）
-    await this.prisma.deathNoteGeneration.deleteMany({ where: { userId } });
-    await this.prisma.userMatch.deleteMany({ where: { userId } });
+    await this.generationService.deleteByUserId(userId);
+    await this.userMatchService.deleteByUserId(userId);
 
     // 步骤 3：从 API 获取最近比赛列表
     const apiMatchIds = await this.matchService.getUserMatchHistory(userId);
     this.logger.log(`API returned ${apiMatchIds.length} matches for user ${userId}`);
 
     const apiMatchIdSet = new Set(apiMatchIds);
-    const oldMatchIds = [...existingMatchIds].filter(id => !apiMatchIdSet.has(id));
-    this.logger.log(`Found ${oldMatchIds.length} old matches that API no longer returns`);
+    const oldMatches = existingMatches.filter(m => !apiMatchIdSet.has(m.matchId));
+    this.logger.log(`Found ${oldMatches.length} old matches that API no longer returns`);
 
     // 创建新记录标记生成中
-    await this.prisma.deathNoteGeneration.create({
-      data: { userId, isGenerated: false },
-    });
+    await this.generationService.create(userId, { isGenerated: false });
 
     // 步骤 4：强制重新处理 API 返回的比赛（forceReparse=true）
     const failedMatches: FailedMatch[] = [];
@@ -180,35 +199,48 @@ export class PubgDeathNoteService {
     }
 
     // 步骤 5：恢复 API 已无法提供的老比赛关联
-    if (oldMatchIds.length > 0) {
-      this.logger.log(`Restoring ${oldMatchIds.length} old match associations...`);
-      await this.restoreOldMatchAssociations(userId, oldMatchIds);
+    if (oldMatches.length > 0) {
+      this.logger.log(`Restoring ${oldMatches.length} old match associations...`);
+      await this.restoreOldMatchAssociations(userId, oldMatches);
     }
 
     // 步骤 6：更新生成状态
-    await this.prisma.deathNoteGeneration.update({
-      where: { userId },
-      data: { isGenerated: true },
-    });
+    await this.generationService.updateIsGenerated(userId, true);
 
-    await this.cleanupProgress(userId);
+    await this.progressService.cleanupProgress(userId);
 
-    const totalMatches = apiMatchIds.length + oldMatchIds.length;
-    const processedCount = apiMatchIds.length - failedMatches.length + oldMatchIds.length;
+    const totalMatches = apiMatchIds.length + oldMatches.length;
+    const processedCount = apiMatchIds.length - failedMatches.length + oldMatches.length;
 
     this.logger.log(`Force generation completed for user ${userId}. Total: ${totalMatches} matches.`);
 
-    // 清除该用户的死亡笔记缓存
-    await cache.invalidatePattern(`deathnote:${userId}:`);
-
-    const nickname = await this.getUserNickname(userId);
+    const nickname = await this.invalidateDeathNoteCache(userId);
 
     return { userId, nickname, isGenerated: true, totalMatches, processedMatches: processedCount };
   }
 
   /**
    * 增量更新（用户手动或定时任务）
-   * 仅用于已生成过的用户，未生成则抛出异常
+   * 
+   * 功能说明：
+   * - 仅用于已生成死亡笔记的用户，未生成则抛出异常
+   * - 从 PUBG API 获取最新比赛列表
+   * - 仅处理本地不存在的新比赛
+   * - 支持失败重试机制
+   * 
+   * 执行流程：
+   * 1. 检查用户是否已生成死亡笔记
+   * 2. 获取 API 最新比赛列表
+   * 3. 过滤出未处理的新比赛
+   * 4. 处理新比赛（解析遥测数据）
+   * 5. 重试失败的比赛
+   * 6. 更新生成状态
+   * 7. 清理进度记录
+   * 8. 清除缓存
+   * 
+   * @param userId - PUBG 玩家 ID
+   * @returns 更新结果，包含用户信息和处理统计
+   * @throws Error 当用户未生成死亡笔记时抛出异常
    */
   @ExecutableTask({
     type: 'death_note_incremental_update',
@@ -221,47 +253,74 @@ export class PubgDeathNoteService {
     }),
   })
   async incrementalUpdate(userId: string): Promise<DeathNoteGenerationResult> {
+    // 步骤 1：检查用户是否已生成死亡笔记
+    const generation = await this.generationService.findByUserId(userId);
+    if (!generation) {
+      throw new Error(`Death note not generated for user ${userId}. Please generate first before incremental update.`);
+    }
+
+    // 步骤 2：获取 API 最新比赛列表
     const matchIds = await this.matchService.getUserMatchHistory(userId);
 
-    const existingMatches = await this.prisma.userMatch.findMany({
-      where: { userId },
-      select: { matchId: true },
-    });
-    const existingMatchIds = new Set(existingMatches.map(m => m.matchId));
+    // 步骤 3：过滤出未处理的新比赛
+    const existingMatchIds = new Set(await this.userMatchService.findMatchIdsByUserId(userId));
     const matchesToProcess = matchIds.filter(id => !existingMatchIds.has(id));
 
     this.logger.log(`Incremental update: ${matchesToProcess.length} new matches to process (out of ${matchIds.length} total)`);
 
+    // 步骤 4：处理新比赛
     const failedMatches: FailedMatch[] = [];
     await this.processMatchList(userId, matchesToProcess, failedMatches);
 
+    // 步骤 5：重试失败的比赛
     if (failedMatches.length > 0) {
       this.logger.log(`Retrying ${failedMatches.length} failed matches...`);
       await this.retryFailedMatches(userId, failedMatches);
     }
 
+    // 步骤 6：更新生成状态
     await this.finalizeGeneration(userId);
-    await this.cleanupProgress(userId);
 
+    // 步骤 7：清理进度记录
+    await this.progressService.cleanupProgress(userId);
+
+    // 步骤 8：清除缓存并返回结果
     const processedCount = matchesToProcess.length - failedMatches.length;
     this.logger.log(`Incremental update completed for user ${userId}. Processed ${processedCount} matches.`);
 
-    // 清除该用户的死亡笔记缓存
-    await cache.invalidatePattern(`deathnote:${userId}:`);
-
-    const nickname = await this.getUserNickname(userId);
+    const nickname = await this.invalidateDeathNoteCache(userId);
 
     return {
       userId,
       nickname,
       isGenerated: true,
-      totalMatches: matchesToProcess.length,
+      totalMatches: matchIds.length,
       processedMatches: processedCount,
     };
   }
 
   /**
    * 断点续传（服务启动时自动调用）
+   * 
+   * 功能说明：
+   * - 服务重启时自动恢复未完成的死亡笔记生成任务
+   * - 从进度记录中恢复已处理的比赛列表
+   * - 继续处理剩余的比赛
+   * - 支持失败重试机制
+   * 
+   * 执行流程：
+   * 1. 获取进度记录
+   * 2. 获取用户最新比赛列表
+   * 3. 计算剩余未处理的比赛
+   * 4. 处理剩余比赛
+   * 5. 重试失败的比赛
+   * 6. 更新生成状态
+   * 7. 清理进度记录
+   * 8. 清除缓存
+   * 
+   * @param userId - PUBG 玩家 ID
+   * @returns 生成结果，包含用户信息和处理统计
+   * @throws Error 当没有进度记录时抛出异常
    */
   @ExecutableTask({
     type: 'death_note_resume',
@@ -273,23 +332,25 @@ export class PubgDeathNoteService {
     }),
   })
   async resumeGeneration(userId: string): Promise<DeathNoteGenerationResult> {
-    const progress = await this.prisma.deathNoteProgress.findUnique({
-      where: { userId },
-    });
+    // 步骤 1：获取进度记录
+    const progress = await this.progressService.getProgress(userId);
 
     if (!progress) {
       throw new Error(`No progress record for user ${userId}`);
     }
 
+    // 步骤 2：获取用户最新比赛列表
     const allMatches = await this.matchService.getUserMatchHistory(userId);
-    const processedIds = new Set<string>(JSON.parse(progress.processedMatches) as string[]);
+    const processedIds = new Set<string>(progress.processedMatches);
     const remainingMatches = allMatches.filter(id => !processedIds.has(id));
 
     this.logger.log(`Resuming user ${userId}: ${remainingMatches.length} matches remaining (out of ${allMatches.length} total)`);
 
-    const failedMatches: FailedMatch[] = JSON.parse(progress.failedMatches) as FailedMatch[];
+    // 步骤 3：处理剩余比赛
+    const failedMatches: FailedMatch[] = [...progress.failedMatches];
     await this.processMatchList(userId, remainingMatches, failedMatches, processedIds, progress.processedCount);
 
+    // 步骤 4：重试失败的比赛
     getCurrentTaskContext()?.checkCancelled();
 
     if (failedMatches.length > 0) {
@@ -298,31 +359,32 @@ export class PubgDeathNoteService {
 
     getCurrentTaskContext()?.checkCancelled();
 
-    const generation = await this.prisma.deathNoteGeneration.findUnique({
-      where: { userId },
-    });
+    // 步骤 5：更新生成状态
+    const generation = await this.generationService.findByUserId(userId);
 
     if (!generation) {
       this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted during processing, skipping final update`);
       return { userId, isGenerated: false };
     }
 
-    await this.prisma.deathNoteGeneration.update({
-      where: { userId },
-      data: { isGenerated: true },
-    });
+    await this.generationService.updateIsGenerated(userId, true);
 
-    await this.cleanupProgress(userId);
+    // 步骤 6：清理进度记录
+    await this.progressService.cleanupProgress(userId);
 
-    const processedCount = allMatches.length - failedMatches.length;
+    // 步骤 7：清除缓存并返回结果
+    const successfullyProcessed = allMatches.length - failedMatches.filter(m => m.retryCount >= DEATH_NOTE.MAX_RETRY_COUNT).length;
 
-    this.logger.log(`Death note generation resumed and completed for user ${userId}. Processed ${processedCount} matches.`);
+    this.logger.log(`Death note generation resumed and completed for user ${userId}. Processed ${successfullyProcessed} matches.`);
+
+    const nickname = await this.invalidateDeathNoteCache(userId);
 
     return {
       userId,
+      nickname,
       isGenerated: true,
       totalMatches: allMatches.length,
-      processedMatches: processedCount,
+      processedMatches: successfullyProcessed,
     };
   }
 
@@ -334,152 +396,41 @@ export class PubgDeathNoteService {
    * 根据昵称获取用户 ID（仅查询数据库）
    */
   async getUserIdByNickname(nickname: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { nickname },
-      select: { pubgId: true },
-    });
-    return user?.pubgId ?? null;
+    return this.userService.getUserIdByNickname(nickname);
   }
 
   /**
    * 检查用户是否已生成死亡笔记
    */
   async hasDeathNoteGeneration(userId: string): Promise<boolean> {
-    const generation = await this.prisma.deathNoteGeneration.findUnique({
-      where: { userId },
-    });
-    return !!generation;
+    return this.generationService.exists(userId);
   }
 
   /**
    * 获取死亡笔记生成状态
    */
-  async getDeathNoteGenerationStatus(userId: string): Promise<DeathNoteStatusResult> {
-    const generation = await this.prisma.deathNoteGeneration.findUnique({
-      where: { userId },
-    });
-
-    if (!generation) {
-      throw new Error(`No death note generation record found for user ${userId}`);
-    }
-
-    const latestTask = await this.prisma.task.findFirst({
-      where: { userId, type: { contains: 'death_note' } },
-      orderBy: { createdAt: 'desc' },
-      select: { status: true, progress: true, type: true },
-    });
-
-    return {
-      isGenerated: generation.isGenerated,
-      createdAt: generation.createdAt,
-      latestTaskStatus: latestTask?.status ?? null,
-      latestTaskProgress: latestTask?.progress ?? 0,
-      latestTaskType: latestTask?.type ?? null,
-    };
+  async getDeathNoteGenerationStatus(userId: string) {
+    return this.generationService.getGenerationStatus(userId);
   }
 
   /**
    * 获取死亡笔记数据
    */
-  async getDeathNoteData(userId: string): Promise<DeathNoteDataResult> {
-    const generation = await this.prisma.deathNoteGeneration.findUnique({
-      where: { userId },
-    });
+  async getDeathNoteData(userId: string) {
+    const generation = await this.generationService.findByUserId(userId);
 
     if (!generation?.isGenerated) {
       throw new Error(`Death note not generated for user ${userId}`);
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: { pubgId: userId },
-    });
-
-    if (!user) {
-      throw new Error(`User not found for ID ${userId}`);
-    }
-
-    const killEvents = await this.prisma.killEvent.findMany({
-      where: {
-        OR: [{ killerId: userId }, { victimId: userId }],
-      },
-      orderBy: { timestamp: 'desc' },
-      include: {
-        match: {
-          select: { playedAt: true, mapName: true, gameMode: true },
-        },
-      },
-    });
-
-    return {
-      userId,
-      nickname: user.nickname,
-      totalKills: killEvents.filter(e => e.killerId === userId).length,
-      totalDeaths: killEvents.filter(e => e.victimId === userId).length,
-      killEvents,
-      lastUpdated: generation.createdAt,
-    };
+    return this.killEventService.getDeathNoteData(userId, generation.createdAt);
   }
 
   /**
    * 获取所有死亡笔记概览
    */
-  async getAllDeathNotes(): Promise<Array<{
-    userId: string;
-    nickname: string;
-    isGenerated: boolean;
-    createdAt: Date;
-    dailyIncrementalEnabled: boolean;
-    latestTaskStatus: string | null;
-    latestTaskProgress: number;
-    latestTaskType: string | null;
-    firstRequestTime: Date;
-    lastUpdateTime: Date | null;
-  }>> {
-    const generations = await this.prisma.deathNoteGeneration.findMany({
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    const results: Array<{
-      userId: string;
-      nickname: string;
-      isGenerated: boolean;
-      createdAt: Date;
-      dailyIncrementalEnabled: boolean;
-      latestTaskStatus: string | null;
-      latestTaskProgress: number;
-      latestTaskType: string | null;
-      firstRequestTime: Date;
-      lastUpdateTime: Date | null;
-    }> = [];
-
-    for (const gen of generations) {
-      const nickname = await this.getUserNickname(gen.userId);
-      const firstTask = await this.prisma.task.findFirst({
-        where: { userId: gen.userId },
-        orderBy: { createdAt: 'asc' },
-        select: { createdAt: true },
-      });
-      const latestTask = await this.prisma.task.findFirst({
-        where: { userId: gen.userId },
-        orderBy: { createdAt: 'desc' },
-        select: { status: true, progress: true, type: true, completedAt: true },
-      });
-
-      results.push({
-        userId: gen.userId,
-        nickname,
-        isGenerated: gen.isGenerated,
-        createdAt: gen.createdAt,
-        dailyIncrementalEnabled: gen.dailyIncrementalEnabled,
-        latestTaskStatus: latestTask?.status ?? null,
-        latestTaskProgress: latestTask?.progress ?? 0,
-        latestTaskType: latestTask?.type ?? null,
-        firstRequestTime: firstTask?.createdAt ?? gen.createdAt,
-        lastUpdateTime: latestTask?.completedAt ?? null,
-      });
-    }
-
-    return results;
+  async getAllDeathNotes() {
+    return this.generationService.getAllOverviews();
   }
 
   // ============================================================
@@ -516,7 +467,7 @@ export class PubgDeathNoteService {
         await this.updateProgress(taskId, progress);
 
         if (processedCount % DEATH_NOTE.HEARTBEAT_INTERVAL === 0) {
-          await this.saveProgress(userId, taskId, processedIds, processedCount, failedMatches, totalMatches);
+          await this.progressService.saveProgress(userId, taskId, processedIds, processedCount, failedMatches, totalMatches);
         }
 
         this.logger.log(`Successfully processed match ${matchId} for user ${userId} (${processedCount}/${totalMatches}) - ${progress}%`);
@@ -555,11 +506,7 @@ export class PubgDeathNoteService {
 
     const participants = this.matchService.extractParticipants(matchData);
     const participantInfo = participants.get(userId) || { ranking: 0, won: false };
-    await this.prisma.userMatch.upsert({
-      where: { userId_matchId: { userId, matchId } },
-      update: { ranking: participantInfo.ranking, won: participantInfo.won },
-      create: { userId, matchId, ranking: participantInfo.ranking, won: participantInfo.won },
-    });
+    await this.userMatchService.upsert(userId, matchId, participantInfo.ranking, participantInfo.won);
 
     if (matchData.telemetryEvents?.length > 0) {
       await this.matchService.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
@@ -604,57 +551,23 @@ export class PubgDeathNoteService {
   }
 
   // ============================================================
-  // 私有方法 - 进度管理
+  // 私有方法 - 缓存管理
   // ============================================================
 
   /**
-   * 保存进度（用于断点续传）
+   * 清除用户的死亡笔记缓存
+   * @param userId - PUBG 玩家 ID
+   * @returns 用户昵称
    */
-  private async saveProgress(
-    userId: string,
-    taskId: string | undefined,
-    processedIds: Set<string>,
-    processedCount: number,
-    failedMatches: FailedMatch[],
-    totalMatches: number,
-  ): Promise<void> {
-    if (!taskId) return;
-
-    const progress = Math.round((processedCount / totalMatches) * 100);
-
-    await Promise.all([
-      this.prisma.deathNoteProgress.upsert({
-        where: { userId },
-        create: {
-          userId,
-          taskId,
-          totalMatches,
-          processedCount,
-          processedMatches: JSON.stringify([...processedIds]),
-          failedMatches: JSON.stringify(failedMatches),
-        },
-        update: {
-          taskId,
-          totalMatches,
-          processedCount,
-          processedMatches: JSON.stringify([...processedIds]),
-          failedMatches: JSON.stringify(failedMatches),
-          updatedAt: new Date(),
-        },
-      }),
-      this.taskService.updateProgress(taskId, progress),
-      this.taskService.updateHeartbeat(taskId),
-    ]);
+  private async invalidateDeathNoteCache(userId: string): Promise<string> {
+    const nickname = await this.getUserNickname(userId);
+    await cache.invalidatePattern(`deathnote:${nickname}:`);
+    return nickname;
   }
 
-  /**
-   * 清理进度记录
-   */
-  private async cleanupProgress(userId: string): Promise<void> {
-    await this.prisma.deathNoteProgress.deleteMany({
-      where: { userId },
-    });
-  }
+  // ============================================================
+  // 私有方法 - 进度管理
+  // ============================================================
 
   /**
    * 更新任务进度
@@ -679,10 +592,7 @@ export class PubgDeathNoteService {
    */
   private async finalizeGeneration(userId: string): Promise<void> {
     try {
-      await this.prisma.deathNoteGeneration.update({
-        where: { userId },
-        data: { isGenerated: true },
-      });
+      await this.generationService.updateIsGenerated(userId, true);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted during processing, skipping final update: ${errorMessage}`);
@@ -692,17 +602,9 @@ export class PubgDeathNoteService {
   /**
    * 恢复老比赛关联
    */
-  private async restoreOldMatchAssociations(userId: string, oldMatchIds: string[]): Promise<void> {
-    const userMatchData = oldMatchIds.map(matchId => ({
-      userId,
-      matchId,
-    }));
-
-    await this.prisma.userMatch.createMany({
-      data: userMatchData,
-    });
-
-    this.logger.log(`Restored ${oldMatchIds.length} old match associations for user ${userId}`);
+  private async restoreOldMatchAssociations(userId: string, oldMatches: UserMatchInfo[]): Promise<void> {
+    await this.userMatchService.createManyWithInfo(userId, oldMatches);
+    this.logger.log(`Restored ${oldMatches.length} old match associations for user ${userId}`);
   }
 
   /**
@@ -711,29 +613,11 @@ export class PubgDeathNoteService {
    * @returns 预估用时（毫秒）
    */
   private async calculateEstimatedDuration(matchCount: number): Promise<number> {
-    const avgTimePerMatch = await this.getAverageTimePerMatch();
-    const timePerMatch = avgTimePerMatch ?? 5000; // 默认 5 秒/比赛
-    return timePerMatch * matchCount;
-  }
-
-  /**
-   * 获取平均每场比赛耗时
-   * 优先使用当前用户的历史数据，其次使用全局平均
-   */
-  private async getAverageTimePerMatch(): Promise<number | null> {
-    // 先查询全局已完成任务
-    return this.calculateAvgTimeFromTasks({
-      status: TaskStatus.COMPLETED,
-      type: { contains: 'death_note' },
-    });
-  }
-
-  /**
-   * 从任务记录中计算平均耗时
-   */
-  private async calculateAvgTimeFromTasks(where: Record<string, unknown>): Promise<number | null> {
     const tasks = await this.prisma.task.findMany({
-      where,
+      where: {
+        status: TaskStatus.COMPLETED,
+        type: { contains: 'death_note' },
+      },
       select: {
         startedAt: true,
         completedAt: true,
@@ -742,7 +626,7 @@ export class PubgDeathNoteService {
     });
 
     if (tasks.length === 0) {
-      return null;
+      return 5000 * matchCount;
     }
 
     let totalDuration = 0;
@@ -751,8 +635,7 @@ export class PubgDeathNoteService {
     for (const task of tasks) {
       if (!task.startedAt || !task.completedAt) continue;
 
-      const duration = task.completedAt.getTime() - task.startedAt.getTime();
-      totalDuration += duration;
+      totalDuration += task.completedAt.getTime() - task.startedAt.getTime();
 
       const matchInfo = this.parseTaskResult(task.result);
       if (matchInfo?.matchCount) {
@@ -760,11 +643,8 @@ export class PubgDeathNoteService {
       }
     }
 
-    if (totalMatches === 0) {
-      return null;
-    }
-
-    return totalDuration / totalMatches;
+    const avgTimePerMatch = totalMatches > 0 ? totalDuration / totalMatches : 5000;
+    return avgTimePerMatch * matchCount;
   }
 
   /**
@@ -774,8 +654,7 @@ export class PubgDeathNoteService {
     if (!result) return null;
 
     try {
-      const parsed = JSON.parse(result) as TaskResultMatchInfo;
-      return parsed;
+      return JSON.parse(result) as TaskResultMatchInfo;
     } catch {
       return null;
     }
@@ -796,27 +675,4 @@ export class PubgDeathNoteService {
     }
   }
 
-  /**
-   * 从比赛数据中提取参与者 ID 列表
-   * 预留供日后功能使用
-   */
-  private extractParticipants(matchData: MatchDataResult): string[] {
-    const participants = new Set<string>();
-
-    const included = (matchData as unknown as Record<string, unknown>)?.included;
-    if (Array.isArray(included)) {
-      for (const item of included) {
-        const record = item as Record<string, unknown>;
-        if (record.type === 'participant') {
-          const stats = (record.attributes as Record<string, unknown>)?.stats as Record<string, unknown> | undefined;
-          const playerId = stats?.playerId as string | undefined;
-          if (playerId) {
-            participants.add(playerId);
-          }
-        }
-      }
-    }
-
-    return Array.from(participants);
-  }
 }

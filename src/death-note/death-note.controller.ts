@@ -117,8 +117,8 @@ export class DeathNoteController {
   async getAvailableDates(@Param('nickname') nickname: string) {
     try {
       validateNickname(nickname);
-      const dates = await this.deathNoteService.getAvailableDates(nickname);
-      return this.successResponse({ dates });
+      const result = await this.deathNoteService.getAvailableDates(nickname);
+      return this.successResponse(result);
     } catch (error) {
       this.logger.error(`Error getting available dates for ${nickname}:`, error);
       throw new HttpException(
