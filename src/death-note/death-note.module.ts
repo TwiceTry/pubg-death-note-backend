@@ -1,3 +1,7 @@
+// src/death-note/death-note.module.ts
+// 死亡笔记模块
+// 负责死亡笔记查询相关功能，包括击杀历史、分页查询、狙击查询等
+
 import { Module } from '@nestjs/common';
 import { DeathNoteController } from './death-note.controller';
 import { DeathNoteService } from './death-note.service';

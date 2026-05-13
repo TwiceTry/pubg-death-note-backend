@@ -1,9 +1,8 @@
 // src/pubg/pubg-death-note.service.ts
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { PubgMatchService } from './pubg-match.service';
 import { PubgUserService } from './pubg-user.service';
-import { TaskService, TaskStatus } from '../task/task.service';
+import { TaskService } from '../task/task.service';
 import { ExecutableTask, getCurrentTaskContext, isTaskCancelled } from '../task/task.decorator';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { DEATH_NOTE } from '../constants';
@@ -11,11 +10,12 @@ import { cache } from '../common/cache.utils';
 import {
   DeathNoteGenerationResult,
   FailedMatch,
+  UserMatchInfo,
 } from './pubg-death-note.types';
 import { MatchDataResult } from './pubg.interfaces';
 import { DeathNoteProgressService } from './pubg-death-note-progress.service';
 import { DeathNoteGenerationService } from './death-note-generation.service';
-import { UserMatchService, UserMatchInfo } from './user-match.service';
+import { UserMatchService } from './user-match.service';
 import { KillEventService } from './kill-event.service';
 
 // ============================================================
@@ -34,7 +34,6 @@ interface TaskResultMatchInfo {
 @Injectable()
 export class PubgDeathNoteService {
   constructor(
-    private readonly prisma: PrismaService,
     private readonly matchService: PubgMatchService,
     private readonly userService: PubgUserService,
     private readonly taskService: TaskService,
@@ -106,27 +105,13 @@ export class PubgDeathNoteService {
     // 步骤 4：计算预估耗时
     const estimatedDuration = await this.calculateEstimatedDuration(matchIds.length);
 
-    // 步骤 5：处理所有比赛
-    const failedMatches: FailedMatch[] = [];
-    await this.processMatchList(userId, matchIds, failedMatches);
+    // 步骤 5-6：处理所有比赛并重试失败
+    const { processedCount } = await this.processMatchesWithRetry(userId, matchIds);
 
-    // 步骤 6：重试失败的比赛
-    if (failedMatches.length > 0) {
-      this.logger.log(`Retrying ${failedMatches.length} failed matches...`);
-      await this.retryFailedMatches(userId, failedMatches);
-    }
+    // 步骤 7-9：完成生成、清理进度、清除缓存
+    const nickname = await this.finalizeAndCleanup(userId);
 
-    // 步骤 7：完成生成标记
-    await this.finalizeGeneration(userId);
-
-    // 步骤 8：清理进度记录
-    await this.progressService.cleanupProgress(userId);
-
-    // 步骤 9：清除缓存并返回结果
-    const processedCount = matchIds.length - failedMatches.length;
     this.logger.log(`Death note generation completed for user ${userId}. Processed ${processedCount} matches.`);
-
-    const nickname = await this.invalidateDeathNoteCache(userId);
 
     return {
       userId,
@@ -189,14 +174,7 @@ export class PubgDeathNoteService {
     await this.generationService.create(userId, { isGenerated: false });
 
     // 步骤 4：强制重新处理 API 返回的比赛（forceReparse=true）
-    const failedMatches: FailedMatch[] = [];
-    await this.processMatchList(userId, apiMatchIds, failedMatches, undefined, undefined, true);
-
-    // 重试失败的比赛
-    if (failedMatches.length > 0) {
-      this.logger.log(`Retrying ${failedMatches.length} failed matches...`);
-      await this.retryFailedMatches(userId, failedMatches);
-    }
+    const { processedCount: apiProcessedCount } = await this.processMatchesWithRetry(userId, apiMatchIds, true);
 
     // 步骤 5：恢复 API 已无法提供的老比赛关联
     if (oldMatches.length > 0) {
@@ -204,19 +182,21 @@ export class PubgDeathNoteService {
       await this.restoreOldMatchAssociations(userId, oldMatches);
     }
 
-    // 步骤 6：更新生成状态
-    await this.generationService.updateIsGenerated(userId, true);
-
-    await this.progressService.cleanupProgress(userId);
+    // 步骤 6：完成生成、清理进度、清除缓存
+    const nickname = await this.finalizeAndCleanup(userId);
 
     const totalMatches = apiMatchIds.length + oldMatches.length;
-    const processedCount = apiMatchIds.length - failedMatches.length + oldMatches.length;
+    const processedCount = apiProcessedCount + oldMatches.length;
 
     this.logger.log(`Force generation completed for user ${userId}. Total: ${totalMatches} matches.`);
 
-    const nickname = await this.invalidateDeathNoteCache(userId);
-
-    return { userId, nickname, isGenerated: true, totalMatches, processedMatches: processedCount };
+    return {
+      userId,
+      nickname,
+      isGenerated: true,
+      totalMatches,
+      processedMatches: processedCount,
+    };
   }
 
   /**
@@ -268,27 +248,13 @@ export class PubgDeathNoteService {
 
     this.logger.log(`Incremental update: ${matchesToProcess.length} new matches to process (out of ${matchIds.length} total)`);
 
-    // 步骤 4：处理新比赛
-    const failedMatches: FailedMatch[] = [];
-    await this.processMatchList(userId, matchesToProcess, failedMatches);
+    // 步骤 4-5：处理新比赛并重试失败
+    const { processedCount } = await this.processMatchesWithRetry(userId, matchesToProcess);
 
-    // 步骤 5：重试失败的比赛
-    if (failedMatches.length > 0) {
-      this.logger.log(`Retrying ${failedMatches.length} failed matches...`);
-      await this.retryFailedMatches(userId, failedMatches);
-    }
+    // 步骤 6-8：完成生成、清理进度、清除缓存
+    const nickname = await this.finalizeAndCleanup(userId);
 
-    // 步骤 6：更新生成状态
-    await this.finalizeGeneration(userId);
-
-    // 步骤 7：清理进度记录
-    await this.progressService.cleanupProgress(userId);
-
-    // 步骤 8：清除缓存并返回结果
-    const processedCount = matchesToProcess.length - failedMatches.length;
     this.logger.log(`Incremental update completed for user ${userId}. Processed ${processedCount} matches.`);
-
-    const nickname = await this.invalidateDeathNoteCache(userId);
 
     return {
       userId,
@@ -346,45 +312,34 @@ export class PubgDeathNoteService {
 
     this.logger.log(`Resuming user ${userId}: ${remainingMatches.length} matches remaining (out of ${allMatches.length} total)`);
 
-    // 步骤 3：处理剩余比赛
-    const failedMatches: FailedMatch[] = [...progress.failedMatches];
-    await this.processMatchList(userId, remainingMatches, failedMatches, processedIds, progress.processedCount);
+    // 步骤 3-4：处理剩余比赛并重试失败（从断点恢复）
+    const { processedCount } = await this.processMatchesWithRetry(
+      userId,
+      remainingMatches,
+      false,
+      processedIds,
+      progress.processedCount,
+      progress.failedMatches,
+    );
 
-    // 步骤 4：重试失败的比赛
-    getCurrentTaskContext()?.checkCancelled();
-
-    if (failedMatches.length > 0) {
-      await this.retryFailedMatches(userId, failedMatches);
-    }
-
-    getCurrentTaskContext()?.checkCancelled();
-
-    // 步骤 5：更新生成状态
+    // 步骤 5-8：完成生成、清理进度、清除缓存
     const generation = await this.generationService.findByUserId(userId);
 
     if (!generation) {
       this.logger.warn(`DeathNoteGeneration record for user ${userId} was deleted during processing, skipping final update`);
-      return { userId, isGenerated: false };
+      return { userId, nickname: '', isGenerated: false, totalMatches: allMatches.length, processedMatches: 0 };
     }
 
-    await this.generationService.updateIsGenerated(userId, true);
+    const nickname = await this.finalizeAndCleanup(userId);
 
-    // 步骤 6：清理进度记录
-    await this.progressService.cleanupProgress(userId);
-
-    // 步骤 7：清除缓存并返回结果
-    const successfullyProcessed = allMatches.length - failedMatches.filter(m => m.retryCount >= DEATH_NOTE.MAX_RETRY_COUNT).length;
-
-    this.logger.log(`Death note generation resumed and completed for user ${userId}. Processed ${successfullyProcessed} matches.`);
-
-    const nickname = await this.invalidateDeathNoteCache(userId);
+    this.logger.log(`Death note generation resumed and completed for user ${userId}. Processed ${processedCount} matches.`);
 
     return {
       userId,
       nickname,
       isGenerated: true,
       totalMatches: allMatches.length,
-      processedMatches: successfullyProcessed,
+      processedMatches: processedCount,
     };
   }
 
@@ -438,7 +393,85 @@ export class PubgDeathNoteService {
   // ============================================================
 
   /**
+   * 处理比赛列表并重试失败的比赛
+   * 
+   * 功能说明：
+   * - 封装 processMatchList + retryFailedMatches 的通用流程
+   * - 返回处理结果统计
+   * 
+   * @param userId - 用户 ID
+   * @param matchIds - 待处理的比赛 ID 列表
+   * @param forceReparse - 是否强制重新解析
+   * @param initialProcessedIds - 初始已处理 ID 集合（断点续传时使用）
+   * @param initialProcessedCount - 初始已处理数量（断点续传时使用）
+   * @param initialFailedMatches - 初始失败列表（断点续传时使用）
+   * @returns 处理结果，包含成功处理数量
+   */
+  private async processMatchesWithRetry(
+    userId: string,
+    matchIds: string[],
+    forceReparse = false,
+    initialProcessedIds?: Set<string>,
+    initialProcessedCount?: number,
+    initialFailedMatches: FailedMatch[] = [],
+  ): Promise<{ processedCount: number }> {
+    const failedMatches: FailedMatch[] = [...initialFailedMatches];
+
+    // 处理比赛列表
+    await this.processMatchList(userId, matchIds, failedMatches, initialProcessedIds, initialProcessedCount, forceReparse);
+
+    // 重试失败的比赛
+    getCurrentTaskContext()?.checkCancelled();
+
+    if (failedMatches.length > 0) {
+      this.logger.log(`Retrying ${failedMatches.length} failed matches...`);
+      await this.retryFailedMatches(userId, failedMatches);
+    }
+
+    // 计算成功处理数量
+    const successfullyProcessed = matchIds.length + (initialProcessedCount ?? 0)
+      - failedMatches.filter(m => m.retryCount >= DEATH_NOTE.MAX_RETRY_COUNT).length;
+
+    return { processedCount: successfullyProcessed };
+  }
+
+  /**
+   * 完成生成并清理
+   * 
+   * 功能说明：
+   * - 封装 finalizeGeneration + cleanupProgress + invalidateDeathNoteCache 的通用流程
+   * - 返回用户昵称
+   * 
+   * @param userId - 用户 ID
+   * @returns 用户昵称
+   */
+  private async finalizeAndCleanup(userId: string): Promise<string> {
+    await this.finalizeGeneration(userId);
+    await this.progressService.cleanupProgress(userId);
+    return this.invalidateDeathNoteCache(userId);
+  }
+
+  /**
    * 处理比赛列表
+   * 
+   * 功能说明：
+   * - 遍历比赛 ID 列表，逐个处理比赛
+   * - 实时更新任务进度（百分比）
+   * - 定期保存进度记录（用于断点续传）
+   * - 收集失败的比赛信息（用于后续重试）
+   * 
+   * 进度计算逻辑：
+   * - processedCount 记录已尝试处理的比赛数量（无论成功或失败）
+   * - 进度百分比 = (已尝试数 / 总数) × 100%
+   * - 这样确保即使所有比赛都失败，进度也能达到 100%
+   * 
+   * 参数说明：
+   * @param userId - 用户 ID
+   * @param matchIds - 待处理的比赛 ID 列表
+   * @param failedMatches - 失败比赛收集数组（会被修改）
+   * @param initialProcessedIds - 初始已处理 ID 集合（断点续传时使用）
+   * @param initialProcessedCount - 初始已处理数量（断点续传时使用）
+   * @param forceReparse - 是否强制重新解析（忽略本地缓存）
    */
   private async processMatchList(
     userId: string,
@@ -455,28 +488,35 @@ export class PubgDeathNoteService {
     const processedIds = initialProcessedIds ?? new Set<string>();
 
     for (const matchId of matchIds) {
+      // 检查任务是否被取消
       context?.checkCancelled();
 
       try {
+        // 处理单个比赛
         await this.processSingleMatch(userId, matchId, forceReparse);
 
-        processedCount++;
+        // 记录成功处理的比赛
         processedIds.add(matchId);
-
-        const progress = totalMatches > 0 ? Math.round((processedCount / totalMatches) * 100) : 100;
-        await this.updateProgress(taskId, progress);
-
-        if (processedCount % DEATH_NOTE.HEARTBEAT_INTERVAL === 0) {
-          await this.progressService.saveProgress(userId, taskId, processedIds, processedCount, failedMatches, totalMatches);
-        }
-
-        this.logger.log(`Successfully processed match ${matchId} for user ${userId} (${processedCount}/${totalMatches}) - ${progress}%`);
       } catch (error) {
+        // 任务取消异常直接抛出
         if (isTaskCancelled(error)) throw error;
 
+        // 收集失败信息
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.logger.error(`Error processing match ${matchId}:`, error);
         failedMatches.push({ matchId, error: errorMessage, retryCount: 0 });
+      } finally {
+        // 无论成功或失败，都计入已处理数量
+        processedCount++;
+
+        // 计算并更新进度百分比
+        const progress = totalMatches > 0 ? Math.round((processedCount / totalMatches) * 100) : 100;
+        await this.updateProgress(taskId, progress);
+
+        // 定期保存进度（用于断点续传）
+        if (processedCount % DEATH_NOTE.HEARTBEAT_INTERVAL === 0) {
+          await this.progressService.saveProgress(userId, taskId, processedIds, processedCount, failedMatches, totalMatches);
+        }
       }
     }
   }
@@ -488,10 +528,10 @@ export class PubgDeathNoteService {
    * @param forceReparse 是否强制重新拉取并解析（忽略本地缓存）
    */
   private async processSingleMatch(userId: string, matchId: string, forceReparse = false): Promise<void> {
-    const existingMatch = await this.prisma.match.findUnique({ where: { id: matchId } });
+    const matchExists = await this.matchService.exists(matchId);
     let matchData: MatchDataResult;
 
-    if (!existingMatch || forceReparse) {
+    if (!matchExists || forceReparse) {
       if (forceReparse) {
         this.logger.log(`Force reprocessing match ${matchId}, fetching fresh data from API...`);
         matchData = await this.matchService.fetchMatchDataFromApi(matchId);
@@ -560,9 +600,9 @@ export class PubgDeathNoteService {
    * @returns 用户昵称
    */
   private async invalidateDeathNoteCache(userId: string): Promise<string> {
-    const nickname = await this.getUserNickname(userId);
-    await cache.invalidatePattern(`deathnote:${nickname}:`);
-    return nickname;
+    const user = await this.userService.getUserById(userId);
+    await cache.invalidatePattern(`deathnote:${user.name}:`);
+    return user.name;
   }
 
   // ============================================================
@@ -613,17 +653,7 @@ export class PubgDeathNoteService {
    * @returns 预估用时（毫秒）
    */
   private async calculateEstimatedDuration(matchCount: number): Promise<number> {
-    const tasks = await this.prisma.task.findMany({
-      where: {
-        status: TaskStatus.COMPLETED,
-        type: { contains: 'death_note' },
-      },
-      select: {
-        startedAt: true,
-        completedAt: true,
-        result: true,
-      },
-    });
+    const tasks = await this.taskService.getCompletedDeathNoteTasks();
 
     if (tasks.length === 0) {
       return 5000 * matchCount;
@@ -657,21 +687,6 @@ export class PubgDeathNoteService {
       return JSON.parse(result) as TaskResultMatchInfo;
     } catch {
       return null;
-    }
-  }
-
-  /**
-   * 获取用户昵称
-   */
-  private async getUserNickname(userId: string): Promise<string> {
-    try {
-      const user = await this.prisma.user.findUnique({
-        where: { pubgId: userId },
-        select: { nickname: true },
-      });
-      return user?.nickname ?? userId;
-    } catch {
-      return userId;
     }
   }
 

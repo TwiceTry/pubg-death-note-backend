@@ -13,10 +13,20 @@ export class PubgUserService {
     private logger: DualOutputLoggerService,
   ) {}
 
+  // ============================================================
+  // 公开 API - 用户查询
+  // ============================================================
+
   /**
    * 通过用户昵称获取用户信息
-   * @param nickname 用户昵称
-   * @returns 用户信息，包含用户 ID 和其他详情
+   * 
+   * 功能说明：
+   * - 优先从数据库缓存读取（1天内有效）
+   * - 缓存过期时调用 API 获取最新信息
+   * - 检测昵称变更并更新数据库
+   * 
+   * @param nickname - 用户昵称
+   * @returns 用户信息，包含用户 ID 和昵称
    */
   async getUserByNickname(nickname: string): Promise<{ id: string; name: string; }> {
     try {
@@ -72,7 +82,13 @@ export class PubgUserService {
 
   /**
    * 通过用户 ID 获取用户信息
-   * @param userId 用户 ID
+   * 
+   * 功能说明：
+   * - 优先从数据库缓存读取（1天内有效）
+   * - 缓存过期时调用 API 获取最新信息
+   * - 更新数据库中的昵称
+   * 
+   * @param userId - 用户 ID
    * @returns 用户信息，包含用户 ID 和昵称
    */
   async getUserById(userId: string): Promise<{ id: string; name: string; }> {
@@ -120,8 +136,35 @@ export class PubgUserService {
   }
 
   /**
+   * 根据昵称获取用户 ID（仅查询数据库）
+   * 
+   * 功能说明：
+   * - 仅查询本地数据库，不调用 API
+   * - 适用于只需要用户 ID 的场景
+   * 
+   * @param nickname - 用户昵称
+   * @returns 用户 ID，未找到时返回 null
+   */
+  async getUserIdByNickname(nickname: string): Promise<string | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { nickname },
+      select: { pubgId: true },
+    });
+    return user?.pubgId ?? null;
+  }
+
+  // ============================================================
+  // 公开 API - 用户管理
+  // ============================================================
+
+  /**
    * 创建或更新用户信息
-   * @param userInfo 用户信息
+   * 
+   * 功能说明：
+   * - 使用 upsert 保证数据唯一性
+   * - 用户存在时更新昵称，不存在时创建新记录
+   * 
+   * @param userInfo - 用户信息，包含 ID 和昵称
    * @returns 更新后的用户信息
    */
   async createOrUpdateUser(userInfo: { id: string; name: string; }) {
@@ -138,23 +181,63 @@ export class PubgUserService {
   }
 
   /**
-   * 检查用户信息是否需要更新
-   * @param lastUpdated 最后更新时间
-   * @returns 是否需要更新
+   * 根据昵称查询用户（返回完整用户记录）
+   * 
+   * 功能说明：
+   * - 直接查询数据库，不调用 API
+   * - 返回完整的用户记录，包含所有字段
+   * 
+   * @param nickname - 用户昵称
+   * @returns 用户记录，未找到时返回 null
    */
-  private shouldUpdateUser(lastUpdated: Date): boolean {
-    // 检查上次更新时间是否超过缓存过期时间（1天）
-    return Date.now() - lastUpdated.getTime() > USER_CACHE_EXPIRY_MS;
+  async findUserByNickname(nickname: string) {
+    return this.prisma.user.findFirst({
+      where: { nickname },
+    });
   }
 
   /**
-   * 根据昵称获取用户 ID（仅查询数据库）
+   * 删除用户
+   * 
+   * 功能说明：
+   * - 根据用户 ID 删除用户记录
+   * 
+   * @param pubgId - PUBG 用户 ID
    */
-  async getUserIdByNickname(nickname: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { nickname },
-      select: { pubgId: true },
+  async deleteUser(pubgId: string) {
+    return this.prisma.user.delete({ where: { pubgId } });
+  }
+
+  /**
+   * 更新用户昵称
+   * 
+   * 功能说明：
+   * - 直接更新数据库中的用户昵称
+   * 
+   * @param pubgId - PUBG 用户 ID
+   * @param nickname - 新昵称
+   */
+  async updateUserNickname(pubgId: string, nickname: string) {
+    return this.prisma.user.update({
+      where: { pubgId },
+      data: { nickname },
     });
-    return user?.pubgId ?? null;
+  }
+
+  // ============================================================
+  // 私有方法 - 缓存管理
+  // ============================================================
+
+  /**
+   * 检查用户信息是否需要更新
+   * 
+   * 功能说明：
+   * - 判断上次更新时间是否超过缓存过期时间（1天）
+   * 
+   * @param lastUpdated - 最后更新时间
+   * @returns 是否需要更新
+   */
+  private shouldUpdateUser(lastUpdated: Date): boolean {
+    return Date.now() - lastUpdated.getTime() > USER_CACHE_EXPIRY_MS;
   }
 }

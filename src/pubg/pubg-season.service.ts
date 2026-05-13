@@ -16,7 +16,22 @@ export class PubgSeasonService {
     private logger: DualOutputLoggerService,
   ) {}
 
-  async getAllSeasons(forceRefresh: boolean = false): Promise<PubgSeason[]> {
+  // ============================================================
+  // 公开 API - 赛季查询
+  // ============================================================
+
+  /**
+   * 获取所有赛季列表
+   * 
+   * 功能说明：
+   * - 优先从数据库缓存读取（30天内有效）
+   * - 缓存过期或强制刷新时从 PUBG API 获取
+   * - 获取后保存到数据库缓存
+   * 
+   * @param forceRefresh - 是否强制刷新（跳过缓存）
+   * @returns 赛季列表
+   */
+  async getAllSeasons(forceRefresh = false): Promise<PubgSeason[]> {
     try {
       if (!forceRefresh) {
         const cachedSeasons = await this.getCachedSeasons();
@@ -39,6 +54,33 @@ export class PubgSeasonService {
     }
   }
 
+  /**
+   * 获取当前赛季
+   * 
+   * 功能说明：
+   * - 调用 getAllSeasons 获取赛季列表
+   * - 返回 isCurrent 为 true 的赛季
+   * 
+   * @returns 当前赛季信息，未找到时返回 null
+   */
+  async getCurrentSeason(): Promise<PubgSeason | null> {
+    const seasons = await this.getAllSeasons();
+    return seasons.find(s => s.isCurrent) || null;
+  }
+
+  // ============================================================
+  // 私有方法 - 缓存管理
+  // ============================================================
+
+  /**
+   * 从数据库获取缓存的赛季数据
+   * 
+   * 功能说明：
+   * - 查询 30 天内获取过的赛季数据
+   * - 按获取时间倒序排列
+   * 
+   * @returns 缓存的赛季列表，无缓存时返回空数组
+   */
   private async getCachedSeasons(): Promise<PubgSeason[]> {
     try {
       const thirtyDaysAgo = new Date(Date.now() - this.CACHE_EXPIRY_MS);
@@ -68,6 +110,16 @@ export class PubgSeasonService {
     }
   }
 
+  /**
+   * 保存赛季数据到数据库
+   * 
+   * 功能说明：
+   * - 使用事务保证数据一致性
+   * - 先删除旧数据，再插入新数据
+   * - 记录当前时间作为 lastFetchedAt
+   * 
+   * @param seasons - 待保存的赛季列表
+   */
   private async saveSeasonsToDatabase(seasons: PubgSeason[]): Promise<void> {
     try {
       const now = new Date();
@@ -94,10 +146,4 @@ export class PubgSeasonService {
       throw error;
     }
   }
-
-  async getCurrentSeason(): Promise<PubgSeason | null> {
-    const seasons = await this.getAllSeasons();
-    return seasons.find(s => s.isCurrent) || null;
-  }
-
 }

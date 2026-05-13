@@ -427,6 +427,24 @@ export class TaskService {
   }
 
   /**
+   * 获取已完成的死亡笔记任务（用于计算预估耗时）
+   * @returns 任务列表，包含开始时间、完成时间和结果
+   */
+  async getCompletedDeathNoteTasks(): Promise<Array<{ startedAt: Date | null; completedAt: Date | null; result: string | null }>> {
+    return this.prisma.task.findMany({
+      where: {
+        status: TaskStatus.COMPLETED,
+        type: { contains: 'death_note' },
+      },
+      select: {
+        startedAt: true,
+        completedAt: true,
+        result: true,
+      },
+    });
+  }
+
+  /**
    * 异步执行任务
    * @param taskId 任务ID
    * @param taskFn 任务执行函数

@@ -858,7 +858,12 @@ async function queryDeathNote(page) {
     document.getElementById('shareLinkUrl').textContent = shareLink;
     document.getElementById('shareLink').style.display = 'block';
 
+    pageNickname = nickname;
+    currentDeathNoteNickname = nickname;
     window.history.pushState({ nickname: nickname }, '', '/n/' + encodeURIComponent(nickname));
+
+    document.getElementById('subtitle').innerHTML = '<span>' + escapeHtml(nickname) + '</span> 的死亡笔记';
+    document.getElementById('guideText').textContent = '输入另一位玩家昵称，查看 ' + escapeHtml(nickname) + ' 是否被对方击杀或击杀过对方';
 
     renderDays(data.days, '');
 

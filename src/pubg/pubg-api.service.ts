@@ -9,14 +9,11 @@ import { ApiStatsService } from './api-stats.service';
 import { ApiRequestDetailService } from './api-request-detail.service';
 import {
   PubgMatchResponse,
-  PubgAssetResource,
-  PubgMatchAttributes,
   TelemetryEvent,
-  PubgMatchData,
   PubgPlayerInfo,
   PubgSeason,
 } from './pubg.interfaces';
-import { PUBG_API_MAX_BATCH_SIZE, PUBG_API_MIN_REQUEST_INTERVAL, PUBG_API_DEFAULT_TIMEOUT, PUBG_API_DEFAULT_RETRY_COUNT } from './pubg.constants';
+import { PUBG_API_MAX_BATCH_SIZE, PUBG_API_MIN_REQUEST_INTERVAL } from './pubg.constants';
 
 interface ApiTokenConfig {
   token: string;
@@ -45,9 +42,22 @@ export class PubgApiService implements OnModuleInit {
     await this.initializeLastRequestTime();
   }
 
+  // ============================================================
+  // 私有方法 - Token 管理
+  // ============================================================
+
+  /**
+   * 初始化 API Token 列表
+   * 
+   * 功能说明：
+   * - 按优先级读取配置：PUBG_API_KEY_N > PUBG_API_KEYS > PUBG_API_KEY
+   * - 为每个 Token 创建独立的限流器
+   * - 使用轮询方式分配请求
+   */
   private initializeApiTokens() {
     const tokens: string[] = [];
     
+    // 方式 1：读取 PUBG_API_KEY_1, PUBG_API_KEY_2, ...
     let index = 1;
     while (true) {
       const key = `PUBG_API_KEY_${index}`;
@@ -60,6 +70,7 @@ export class PubgApiService implements OnModuleInit {
       }
     }
     
+    // 方式 2：读取 PUBG_API_KEYS（逗号分隔）
     if (tokens.length === 0) {
       const apiKeys = this.configService.get<string>('PUBG_API_KEYS');
       if (apiKeys) {
@@ -68,6 +79,7 @@ export class PubgApiService implements OnModuleInit {
       }
     }
     
+    // 方式 3：读取单个 PUBG_API_KEY
     if (tokens.length === 0) {
       const singleKey = this.configService.get<string>('PUBG_API_KEY');
       if (singleKey && singleKey.trim().length > 0) {
@@ -92,6 +104,11 @@ export class PubgApiService implements OnModuleInit {
     }));
   }
 
+  /**
+   * 获取下一个 API Token（轮询方式）
+   * 
+   * @returns Token 配置对象
+   */
   private getNextApiToken(): ApiTokenConfig {
     const token = this.apiTokens[this.currentTokenIndex];
     this.currentTokenIndex = (this.currentTokenIndex + 1) % this.apiTokens.length;
@@ -99,6 +116,18 @@ export class PubgApiService implements OnModuleInit {
     return token;
   }
 
+  // ============================================================
+  // 私有方法 - 请求时间管理
+  // ============================================================
+
+  /**
+   * 初始化最后请求时间
+   * 
+   * 功能说明：
+   * - 从数据库读取上次请求时间
+   * - 计算需要等待的时间以满足限流要求
+   * - 等待必要的时间后再进行首次请求
+   */
   private async initializeLastRequestTime() {
     try {
       this.logger.log('Initializing last request time...');
@@ -125,6 +154,9 @@ export class PubgApiService implements OnModuleInit {
     }
   }
 
+  /**
+   * 更新最后请求时间到数据库
+   */
   private async updateLastRequestTime() {
     try {
       await this.prisma.apiRequestLog.upsert({
@@ -137,6 +169,24 @@ export class PubgApiService implements OnModuleInit {
     }
   }
 
+  // ============================================================
+  // 私有方法 - HTTP 请求
+  // ============================================================
+
+  /**
+   * 执行带限流的 API 请求
+   * 
+   * 功能说明：
+   * - 使用 Bottleneck 限流器控制请求频率
+   * - 支持自动重试
+   * - 记录请求详情和统计信息
+   * 
+   * @param url - 请求 URL
+   * @param config - Axios 配置
+   * @param retryCount - 重试次数
+   * @param endpoint - 端点类型
+   * @returns Axios 响应
+   */
   private async makeApiRequest<T>(url: string, config: any, retryCount: number, endpoint: string): Promise<any> {
     const tokenConfig = this.getNextApiToken();
     const maskedToken = tokenConfig.token.substring(0, 8) + '...';
@@ -199,6 +249,20 @@ export class PubgApiService implements OnModuleInit {
     });
   }
 
+  /**
+   * 执行直接请求（不限流）
+   * 
+   * 功能说明：
+   * - 不使用 Bottleneck 限流器
+   * - 支持自动重试
+   * - 记录请求详情
+   * 
+   * @param url - 请求 URL
+   * @param config - Axios 配置
+   * @param retryCount - 重试次数
+   * @param endpoint - 端点类型
+   * @returns Axios 响应
+   */
   private async makeDirectRequest<T>(url: string, config: any, retryCount: number, endpoint: string): Promise<any> {
     let attempts = 0;
     const startTime = Date.now();
@@ -241,6 +305,20 @@ export class PubgApiService implements OnModuleInit {
     throw new Error('Max retries exceeded');
   }
 
+  // ============================================================
+  // 公开 API - 比赛数据
+  // ============================================================
+
+  /**
+   * 获取比赛数据
+   * 
+   * 功能说明：
+   * - 从 PUBG API 获取指定比赛的详细信息
+   * - 返回比赛数据和包含的玩家/队伍信息
+   * 
+   * @param matchId - 比赛 ID
+   * @returns 比赛数据（data 和 included）
+   */
   async getMatch(matchId: string): Promise<{ data: any; included: any[] }> {
     const region = this.configService.get<string>('PUBG_API_REGION', 'steam');
     const timeout = this.configService.get<number>('PUBG_API_TIMEOUT', 30000);
@@ -259,6 +337,16 @@ export class PubgApiService implements OnModuleInit {
     };
   }
 
+  /**
+   * 获取比赛遥测数据
+   * 
+   * 功能说明：
+   * - 从遥测 URL 获取比赛事件数据
+   * - 支持大文件下载（无内容长度限制）
+   * 
+   * @param telemetryUrl - 遥测数据 URL
+   * @returns 遥测事件列表
+   */
   async getMatchTelemetry(telemetryUrl: string): Promise<TelemetryEvent[]> {
     const timeout = this.configService.get<number>('PUBG_API_TIMEOUT', 30000);
     const retryCount = this.configService.get<number>('PUBG_API_RETRY_COUNT', 3);
@@ -273,10 +361,20 @@ export class PubgApiService implements OnModuleInit {
     return response.data;
   }
 
+  // ============================================================
+  // 公开 API - 玩家查询
+  // ============================================================
+
   /**
-   * 通过昵称查询用户（支持单个或多个，最多10个）
-   * @param nicknames 用户昵称（单个字符串或字符串数组）
-   * @returns 用户信息列表
+   * 通过昵称查询玩家（支持批量查询，最多 10 个）
+   * 
+   * 功能说明：
+   * - 支持单个昵称或昵称数组
+   * - 自动分批处理（每批最多 10 个）
+   * - 返回所有匹配的玩家信息
+   * 
+   * @param nicknames - 用户昵称（单个字符串或字符串数组）
+   * @returns 玩家信息列表
    */
   async getPlayersByNicknames(nicknames: string | string[]): Promise<PubgPlayerInfo[]> {
     const region = this.configService.get<string>('PUBG_API_REGION', 'steam');
@@ -285,10 +383,8 @@ export class PubgApiService implements OnModuleInit {
 
     const userSearchUrl = `https://api.pubg.com/shards/${region}/players`;
 
-    // 统一处理单个和多个昵称
     const nicknameList = Array.isArray(nicknames) ? nicknames : [nicknames];
     
-    // PUBG API 限制每次最多查询10个用户，分批处理
     const batches: string[][] = [];
     for (let i = 0; i < nicknameList.length; i += this.MAX_BATCH_SIZE) {
       batches.push(nicknameList.slice(i, i + this.MAX_BATCH_SIZE));
@@ -319,9 +415,10 @@ export class PubgApiService implements OnModuleInit {
   }
 
   /**
-   * 通过昵称查询单个用户（兼容旧接口）
-   * @param nickname 用户昵称
-   * @returns 用户信息
+   * 通过昵称查询单个玩家（兼容旧接口）
+   * 
+   * @param nickname - 用户昵称
+   * @returns 玩家信息
    */
   async getPlayerByNickname(nickname: string): Promise<PubgPlayerInfo> {
     const players = await this.getPlayersByNicknames(nickname);
@@ -334,10 +431,13 @@ export class PubgApiService implements OnModuleInit {
   }
 
   /**
-   * 通过用户ID查询单个用户
-   * 注意：此接口返回单个对象，不是数组
-   * @param playerId 用户ID
-   * @returns 用户信息
+   * 通过玩家 ID 查询单个玩家
+   * 
+   * 功能说明：
+   * - 返回单个玩家对象，不是数组
+   * 
+   * @param playerId - 玩家 ID
+   * @returns 玩家信息
    */
   async getPlayerById(playerId: string): Promise<PubgPlayerInfo> {
     const region = this.configService.get<string>('PUBG_API_REGION', 'steam');
@@ -351,7 +451,6 @@ export class PubgApiService implements OnModuleInit {
       timeout,
     }, retryCount, 'player');
 
-    // 单个用户查询返回的是单个对象，不是数组
     const user = response.data.data;
     
     return {
@@ -364,9 +463,15 @@ export class PubgApiService implements OnModuleInit {
   }
 
   /**
-   * 通过用户ID批量查询用户信息（支持单个或多个，最多10个）
-   * @param playerIds 用户ID列表（支持单个或多个）
-   * @returns 用户信息列表
+   * 通过玩家 ID 批量查询玩家信息（支持批量查询，最多 10 个）
+   * 
+   * 功能说明：
+   * - 支持单个 ID 或 ID 数组
+   * - 自动分批处理（每批最多 10 个）
+   * - 返回所有匹配的玩家信息
+   * 
+   * @param playerIds - 玩家 ID 列表（支持单个或多个）
+   * @returns 玩家信息列表
    */
   async getPlayersByIds(playerIds: string | string[]): Promise<PubgPlayerInfo[]> {
     const region = this.configService.get<string>('PUBG_API_REGION', 'steam');
@@ -375,10 +480,8 @@ export class PubgApiService implements OnModuleInit {
 
     const userSearchUrl = `https://api.pubg.com/shards/${region}/players`;
 
-    // 统一处理单个和多个ID
     const playerIdList = Array.isArray(playerIds) ? playerIds : [playerIds];
     
-    // PUBG API 限制每次最多查询10个用户，分批处理
     const batches: string[][] = [];
     for (let i = 0; i < playerIdList.length; i += this.MAX_BATCH_SIZE) {
       batches.push(playerIdList.slice(i, i + this.MAX_BATCH_SIZE));
@@ -408,6 +511,19 @@ export class PubgApiService implements OnModuleInit {
     return allResults;
   }
 
+  // ============================================================
+  // 公开 API - 赛季查询
+  // ============================================================
+
+  /**
+   * 获取所有赛季列表
+   * 
+   * 功能说明：
+   * - 从 PUBG API 获取指定区域的所有赛季
+   * - 返回赛季 ID、是否当前赛季、开始/结束时间
+   * 
+   * @returns 赛季列表
+   */
   async getAllSeasons(): Promise<PubgSeason[]> {
     const region = this.configService.get<string>('PUBG_API_REGION', 'steam');
     const timeout = this.configService.get<number>('PUBG_API_TIMEOUT', 30000);

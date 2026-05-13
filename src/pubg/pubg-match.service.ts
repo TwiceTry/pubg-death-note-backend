@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { PubgApiService } from './pubg-api.service';
+import { PubgUserService } from './pubg-user.service';
 import { MatchDataResult, TelemetryKillEventV2, TelemetryEvent } from './pubg.interfaces';
 import { DualOutputLoggerService } from '../common/dual-output-logger.service';
 import { TaskService } from '../task/task.service';
@@ -29,6 +30,7 @@ export class PubgMatchService {
   constructor(
     private prisma: PrismaService,
     private pubgApi: PubgApiService,
+    private userService: PubgUserService,
     private configService: ConfigService,
     private taskService: TaskService,
     private generationService: DeathNoteGenerationService,
@@ -41,12 +43,18 @@ export class PubgMatchService {
   }
 
   // ============================================================
-  // 数据获取（主入口）
+  // 公开 API - 数据获取（主入口）
   // ============================================================
 
   /**
    * 获取比赛原始数据
-   * 优先从本地缓存读取，不存在则调用 PUBG API 获取并缓存
+   * 
+   * 功能说明：
+   * - 优先从本地缓存读取
+   * - 本地不存在则调用 PUBG API 获取并缓存
+   * 
+   * @param matchId - 比赛 ID
+   * @returns 比赛原始数据
    */
   async getMatchOriginalData(matchId: string): Promise<MatchDataResult> {
     const paths = this.getMatchPaths(matchId);
@@ -62,6 +70,14 @@ export class PubgMatchService {
 
   /**
    * 强制从 API 获取比赛原始数据（跳过本地缓存）
+   * 
+   * 功能说明：
+   * - 从 PUBG API 获取比赛数据
+   * - 提取遥测 URL 并获取遥测事件
+   * - 按日期分目录缓存到本地
+   * 
+   * @param matchId - 比赛 ID
+   * @returns 比赛原始数据
    */
   async fetchMatchDataFromApi(matchId: string): Promise<MatchDataResult> {
     const matchData = await this.pubgApi.getMatch(matchId);
@@ -88,168 +104,73 @@ export class PubgMatchService {
   }
 
   // ============================================================
-  // 本地文件操作
+  // 公开 API - 数据解析
   // ============================================================
 
   /**
-   * 获取本地所有 matchId（支持日期子目录和根目录）
+   * 从比赛数据中提取所有参与者信息
+   * 
+   * 功能说明：
+   * - 解析 roster 获取队伍排名和胜利信息
+   * - 通过 participant 映射到玩家 ID
+   * 
+   * @param matchData - 比赛原始数据
+   * @returns 玩家 ID 到排名和胜利信息的映射
    */
-  getLocalMatchFiles(): string[] {
-    if (!fs.existsSync(this.matchBaseDir)) {
-      return [];
+  extractParticipants(matchData: MatchDataResult): Map<string, { ranking: number; won: boolean }> {
+    const participants = new Map<string, { ranking: number; won: boolean }>();
+
+    const included = (matchData as any).included;
+    if (!included || !Array.isArray(included)) {
+      return participants;
     }
 
-    const matchIds: string[] = [];
-    const entries = fs.readdirSync(this.matchBaseDir);
-
-    for (const entry of entries) {
-      const fullPath = path.join(this.matchBaseDir, entry);
-      const stat = fs.statSync(fullPath);
-
-      if (stat.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry)) {
-        const files = fs.readdirSync(fullPath);
-        files
-          .filter(file => file.endsWith('.json'))
-          .forEach(file => matchIds.push(file.replace('.json', '')));
-      } else if (stat.isFile() && entry.endsWith('.json')) {
-        matchIds.push(entry.replace('.json', ''));
+    // 步骤 1：建立 participantId -> { rank, won } 的映射
+    const participantInfoMap = new Map<string, { rank: number; won: boolean }>();
+    for (const item of included) {
+      if (item.type === 'roster' && item.id) {
+        const rank = item.attributes?.stats?.rank;
+        const won = item.attributes?.won === 'true' || item.attributes?.won === true;
+        
+        // 获取该 roster 下的所有 participant id
+        const participantIds = item.relationships?.participants?.data;
+        if (Array.isArray(participantIds)) {
+          for (const p of participantIds) {
+            if (p?.type === 'participant' && p?.id) {
+              participantInfoMap.set(p.id, { rank: rank || 0, won });
+            }
+          }
+        }
       }
     }
 
-    return matchIds;
-  }
+    // 步骤 2：遍历 participant，通过 participant.id 匹配到对应的 roster 信息
+    for (const item of included) {
+      if (item.type === 'participant' && item.attributes?.stats?.playerId) {
+        const playerId = item.attributes.stats.playerId;
+        const participantId = item.id;
+        const info = participantInfoMap.get(participantId);
 
-  /**
-   * 构建比赛文件路径
-   * @param dateStr 可选，格式 YYYY-MM-DD，用于按日期分目录存储
-   */
-  private getMatchPaths(matchId: string, dateStr?: string): MatchPaths {
-    const dataFileName = `${matchId}.json`;
-
-    if (dateStr) {
-      const matchDir = path.join(this.matchBaseDir, dateStr);
-      const telemetryDir = path.join(this.telemetryBaseDir, dateStr);
-      return {
-        matchDir,
-        telemetryDir,
-        matchFilePath: path.join(matchDir, dataFileName),
-        telemetryFilePath: path.join(telemetryDir, dataFileName),
-        dataFileName,
-      };
-    }
-
-    return {
-      matchDir: this.matchBaseDir,
-      telemetryDir: this.telemetryBaseDir,
-      matchFilePath: path.join(this.matchBaseDir, dataFileName),
-      telemetryFilePath: path.join(this.telemetryBaseDir, dataFileName),
-      dataFileName,
-    };
-  }
-
-  /**
-   * 查找比赛文件，优先根目录，再遍历日期子目录
-   */
-  private findMatchFile(baseDir: string, fileName: string): string | null {
-    const directPath = path.join(baseDir, fileName);
-    if (fs.existsSync(directPath)) {
-      return directPath;
-    }
-
-    if (!fs.existsSync(baseDir)) {
-      return null;
-    }
-
-    const dateDirs = fs.readdirSync(baseDir).filter(f => {
-      const fullPath = path.join(baseDir, f);
-      return fs.statSync(fullPath).isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(f);
-    });
-
-    for (const dateDir of dateDirs) {
-      const filePath = path.join(baseDir, dateDir, fileName);
-      if (fs.existsSync(filePath)) {
-        return filePath;
+        participants.set(playerId, {
+          ranking: info?.rank || 0,
+          won: info?.won ?? false,
+        });
       }
     }
 
-    return null;
-  }
-
-  /**
-   * 确保 match 和 telemetry 目录存在
-   */
-  private ensureDirectoriesExist(paths: { matchDir: string; telemetryDir: string }): void {
-    if (!fs.existsSync(paths.matchDir)) {
-      fs.mkdirSync(paths.matchDir, { recursive: true });
-    }
-    if (!fs.existsSync(paths.telemetryDir)) {
-      fs.mkdirSync(paths.telemetryDir, { recursive: true });
-    }
-  }
-
-  /**
-   * 从比赛数据中提取日期字符串 (YYYY-MM-DD)
-   * 使用时区配置 TZ，默认 Asia/Shanghai
-   */
-  private extractDateFromMatchData(matchData: any): string {
-    try {
-      const createdAt = matchData.data?.attributes?.createdAt;
-      if (createdAt) {
-        const tz = this.configService.get<string>('TZ', 'Asia/Shanghai');
-        const date = new Date(createdAt);
-        return date.toLocaleDateString('sv-SE', { timeZone: tz });
-      }
-    } catch (error) {
-      this.logger.warn(`Failed to extract date from match data:`, error);
-    }
-    return '';
+    return participants;
   }
 
   // ============================================================
-  // 数据读写（本地缓存）
-  // ============================================================
-
-  /**
-   * 读取本地缓存的比赛数据
-   * @returns 存在则返回 MatchDataResult，不存在返回 null
-   */
-  private async readLocalMatchData(matchId: string, paths: MatchPaths): Promise<MatchDataResult | null> {
-    try {
-      const matchFile = this.findMatchFile(this.matchBaseDir, paths.dataFileName);
-      const telemetryFile = this.findMatchFile(this.telemetryBaseDir, paths.dataFileName);
-
-      if (matchFile && telemetryFile) {
-        const matchData = JSON.parse(fs.readFileSync(matchFile, 'utf-8'));
-        const telemetryEvents = JSON.parse(fs.readFileSync(telemetryFile, 'utf-8'));
-
-        return {
-          attributes: matchData.data.attributes,
-          included: matchData.included,
-          telemetryEvents,
-          dataPath: matchFile,
-        };
-      }
-      return null;
-    } catch (error) {
-      this.logger.warn(`Failed to read local match data for ${matchId}:`, error);
-      return null;
-    }
-  }
-
-  /**
-   * 保存比赛数据和遥测数据到本地 JSON 文件
-   */
-  private async saveMatchData(matchData: any, telemetryEvents: any[], paths: MatchPaths): Promise<void> {
-    fs.writeFileSync(paths.matchFilePath, JSON.stringify({ data: matchData.data, included: matchData.included }, null, 2));
-    fs.writeFileSync(paths.telemetryFilePath, JSON.stringify(telemetryEvents, null, 2));
-  }
-
-  // ============================================================
-  // 数据库操作
+  // 公开 API - 数据库操作
   // ============================================================
 
   /**
    * 保存/更新比赛信息到 Match 表
+   * 
+   * @param matchId - 比赛 ID
+   * @param matchData - 比赛原始数据
+   * @returns 保存后的比赛记录
    */
   async saveMatch(matchId: string, matchData: MatchDataResult): Promise<any> {
     return this.prisma.match.upsert({
@@ -271,7 +192,14 @@ export class PubgMatchService {
 
   /**
    * 解析遥测数据中的击杀事件并保存到 KillEvent 表
-   * 解析后会清空 telemetryEvents 数组释放内存
+   * 
+   * 功能说明：
+   * - 过滤击杀事件（LogPlayerKillV2 / LogPlayerKill）
+   * - 解析后清空 telemetryEvents 数组释放内存
+   * - 使用事务批量 upsert，避免重复数据
+   * 
+   * @param matchId - 比赛 ID
+   * @param telemetryEvents - 遥测事件数组（会被清空）
    */
   async parseAndSaveKillEvents(matchId: string, telemetryEvents: TelemetryEvent[]): Promise<void> {
     const killEvents = telemetryEvents.filter(event =>
@@ -330,168 +258,91 @@ export class PubgMatchService {
     this.logger.log(`Successfully saved ${parsedEvents.length} kill events for match ${matchId}`);
   }
 
-  /**
-   * 解析单个击杀事件
-   * 兼容 LogPlayerKillV2 和 LogPlayerKill 两种格式
-   * @returns 解析后的击杀事件，victimId 为空时返回 null
-   */
-  private parseKillEvent(event: TelemetryKillEventV2): {
-    killerId: string | null;
-    killerName: string | null;
-    victimId: string;
-    victimName: string;
-    weaponId: string;
-    distance: number;
-    isHeadshot: boolean;
-    timestamp: Date;
-  } | null {
-    let killerId: string | null;
-    let killerName: string | null;
-    let victimId: string;
-    let victimName: string;
-    let weaponId: string;
-    let distance: number;
-    let isHeadshot: boolean;
-    let timestamp: Date;
-
-    if (event._T === 'LogPlayerKillV2') {
-      killerId = event.killer?.accountId || null;
-      killerName = event.killer?.name || null;
-      victimId = event.victim?.accountId || '';
-      victimName = event.victim?.name || '';
-      weaponId = this.getFirstDefined(event.killerDamageInfo?.damageCauserName, event.finishDamageInfo?.damageCauserName);
-      distance = event.killerDamageInfo?.distance || event.finishDamageInfo?.distance || 0;
-      isHeadshot = event.killerDamageInfo?.damageReason === 'HeadShot' || event.finishDamageInfo?.damageReason === 'HeadShot';
-      timestamp = new Date(event._D);
-    } else {
-      killerId = event.character?.accountId || null;
-      killerName = event.character?.name || null;
-      victimId = event.victim?.accountId || '';
-      victimName = event.victim?.name || '';
-      weaponId = this.getFirstDefined(event.weapon?.weaponId, event.weapon?.weaponClass);
-      distance = event.distance || 0;
-      isHeadshot = event.isHeadshot || false;
-      timestamp = new Date(event.timestamp || event._D);
-    }
-
-    if (!victimId) {
-      return null;
-    }
-
-    if (!killerId) {
-      weaponId = this.getFirstDefined(event.finishDamageInfo?.damageTypeCategory, event.killerDamageInfo?.damageTypeCategory, weaponId);
-    }
-
-    return { killerId, killerName, victimId, victimName, weaponId, distance, isHeadshot, timestamp };
-  }
-
-  /**
-   * 返回第一个非空字符串
-   */
-  private getFirstDefined(...values: (string | undefined)[]): string {
-    return values.find(v => v !== undefined && v !== '') || 'Unknown';
-  }
-
-  /**
-   * 从比赛数据中提取所有参与者 playerId、ranking 和 won
-   * 排名和胜利信息都在 roster 对象中
-   * roster.relationships.participants.data 包含该队伍的 participant id 列表
-   * 通过 participant.id 匹配到对应的 roster 获取 ranking 和 won
-   */
-  extractParticipants(matchData: MatchDataResult): Map<string, { ranking: number; won: boolean }> {
-    const participants = new Map<string, { ranking: number; won: boolean }>();
-
-    const included = (matchData as any).included;
-    if (!included || !Array.isArray(included)) {
-      return participants;
-    }
-
-    // 步骤 1：建立 participantId -> { rank, won } 的映射
-    const participantInfoMap = new Map<string, { rank: number; won: boolean }>();
-    for (const item of included) {
-      if (item.type === 'roster' && item.id) {
-        const rank = item.attributes?.stats?.rank;
-        const won = item.attributes?.won === 'true' || item.attributes?.won === true;
-        
-        // 获取该 roster 下的所有 participant id
-        const participantIds = item.relationships?.participants?.data;
-        if (Array.isArray(participantIds)) {
-          for (const p of participantIds) {
-            if (p?.type === 'participant' && p?.id) {
-              participantInfoMap.set(p.id, { rank: rank || 0, won });
-            }
-          }
-        }
-      }
-    }
-
-    // 步骤 2：遍历 participant，通过 participant.id 匹配到对应的 roster 信息
-    for (const item of included) {
-      if (item.type === 'participant' && item.attributes?.stats?.playerId) {
-        const playerId = item.attributes.stats.playerId;
-        const participantId = item.id;
-        const info = participantInfoMap.get(participantId);
-
-        participants.set(playerId, {
-          ranking: info?.rank || 0,
-          won: info?.won ?? false,
-        });
-      }
-    }
-
-    return participants;
-  }
-
   // ============================================================
-  // 比赛同步
+  // 公开 API - 本地文件操作
   // ============================================================
 
   /**
-   * 处理单场比赛同步
-   * 1. 获取比赛数据（本地或 API）
-   * 2. 保存到 Match 表
-   * 3. 关联已生成死亡笔记的用户到 UserMatch 表
-   * 4. 解析击杀事件到 KillEvent 表
+   * 获取本地所有 matchId
+   * 
+   * 功能说明：
+   * - 支持日期子目录（YYYY-MM-DD）和根目录
+   * - 返回所有 .json 文件名（不含扩展名）
+   * 
+   * @returns 比赛 ID 列表
    */
-  private async processSingleMatchSync(
-    matchId: string,
-    deathNoteUserIds: Set<string>,
-  ): Promise<{ newMatches: number; updatedMatches: number; newUserMatches: number; newKillEvents: number }> {
-    const matchData = await this.getMatchOriginalData(matchId);
-    const existingMatch = await this.prisma.match.findUnique({ where: { id: matchId } });
-
-    await this.saveMatch(matchId, matchData);
-
-    const participants = this.extractParticipants(matchData);
-    const matchedUsers = Array.from(participants.entries())
-      .filter(([userId]) => deathNoteUserIds.has(userId));
-
-    let newUserMatches = 0;
-    for (const [userId, { ranking, won }] of matchedUsers) {
-      await this.userMatchService.upsert(userId, matchId, ranking, won);
-      newUserMatches++;
+  getLocalMatchFiles(): string[] {
+    if (!fs.existsSync(this.matchBaseDir)) {
+      return [];
     }
 
-    let newKillEvents = 0;
-    if (matchData.telemetryEvents?.length > 0) {
-      newKillEvents = matchData.telemetryEvents.filter(event =>
-        event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill',
-      ).length;
-      await this.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
+    const matchIds: string[] = [];
+    const entries = fs.readdirSync(this.matchBaseDir);
+
+    for (const entry of entries) {
+      const fullPath = path.join(this.matchBaseDir, entry);
+      const stat = fs.statSync(fullPath);
+
+      if (stat.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry)) {
+        const files = fs.readdirSync(fullPath);
+        files
+          .filter(file => file.endsWith('.json'))
+          .forEach(file => matchIds.push(file.replace('.json', '')));
+      } else if (stat.isFile() && entry.endsWith('.json')) {
+        matchIds.push(entry.replace('.json', ''));
+      }
     }
 
-    return {
-      newMatches: existingMatch ? 0 : 1,
-      updatedMatches: existingMatch ? 1 : 0,
-      newUserMatches,
-      newKillEvents,
-    };
+    return matchIds;
   }
+
+  // ============================================================
+  // 公开 API - 比赛查询
+  // ============================================================
+
+  /**
+   * 检查比赛是否存在
+   * 
+   * @param matchId - 比赛 ID
+   * @returns 是否存在
+   */
+  async exists(matchId: string): Promise<boolean> {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true },
+    });
+    return !!match;
+  }
+
+  /**
+   * 获取用户历史比赛 ID 列表（最近 14 天）
+   * 
+   * 功能说明：
+   * - 通过 PUBG API 查询玩家信息
+   * - 返回玩家最近 14 天的比赛 ID 列表
+   * 
+   * @param userId - 玩家 ID
+   * @returns 比赛 ID 列表
+   */
+  async getUserMatchHistory(userId: string): Promise<string[]> {
+    const players = await this.pubgApi.getPlayersByIds(userId);
+    return players[0]?.matches || [];
+  }
+
+  // ============================================================
+  // 公开 API - 比赛同步（带任务装饰器）
+  // ============================================================
 
   /**
    * 同步本地所有 match 数据到数据库
-   * 遍历本地 game-data 目录，将 match/userMatch/killEvent 同步到数据库
-   * 所有操作使用 upsert，重复数据不会重复添加
+   * 
+   * 功能说明：
+   * - 遍历本地 game-data 目录
+   * - 将 match/userMatch/killEvent 同步到数据库
+   * - 所有操作使用 upsert，重复数据不会重复添加
+   * - 同步完成后清除受影响用户的缓存
+   * 
+   * @returns 同步结果统计
    */
   @ExecutableTask({
     type: 'sync_local_matches',
@@ -555,57 +406,20 @@ export class PubgMatchService {
     };
   }
 
-  /**
-   * 清除所有已生成死亡笔记的用户的缓存
-   */
-  private async invalidateDeathNoteCache(): Promise<void> {
-    const deathNoteUsers = await this.generationService.findAll();
-    for (const user of deathNoteUsers) {
-      if (!user.isGenerated) continue;
-      const nickname = await this.prisma.user.findFirst({
-        where: { pubgId: user.userId },
-        select: { nickname: true },
-      });
-      if (nickname) {
-        await cache.invalidatePattern(`deathnote:${nickname.nickname}:`);
-      }
-    }
-  }
-
   // ============================================================
-  // 遥测重解析
+  // 公开 API - 遥测重解析（带任务装饰器）
   // ============================================================
-
-  /**
-   * 获取用户历史比赛 ID 列表（最近 14 天）
-   */
-  async getUserMatchHistory(userId: string): Promise<string[]> {
-    const players = await this.pubgApi.getPlayersByIds(userId);
-    return players[0]?.matches || [];
-  }
-
-  /**
-   * 批量获取多个用户的比赛ID列表
-   * 复用 getPlayersByIds 的批量查询能力，每批最多10个用户
-   */
-  private async getPlayersMatchesBatch(playerIds: string[]): Promise<Map<string, string[]>> {
-    const result = new Map<string, string[]>();
-
-    for (let i = 0; i < playerIds.length; i += 10) {
-      const batch = playerIds.slice(i, i + 10);
-      const players = await this.pubgApi.getPlayersByIds(batch);
-
-      for (const player of players) {
-        result.set(player.id, player.matches || []);
-      }
-    }
-
-    return result;
-  }
 
   /**
    * 重解析单场比赛遥测数据
-   * 删除本地缓存后重新从 API 获取并解析击杀事件
+   * 
+   * 功能说明：
+   * - 删除本地缓存
+   * - 重新从 API 获取比赛数据
+   * - 重新解析击杀事件
+   * 
+   * @param matchId - 比赛 ID
+   * @returns 重解析结果
    */
   @ExecutableTask({
     type: 'reparse_match',
@@ -645,6 +459,14 @@ export class PubgMatchService {
 
   /**
    * 重解析用户所有比赛遥测数据（带进度回调）
+   * 
+   * 功能说明：
+   * - 获取用户所有比赛 ID
+   * - 批量重解析遥测数据
+   * - 支持任务取消和进度更新
+   * 
+   * @param userId - 玩家 ID
+   * @returns 重解析结果统计
    */
   @ExecutableTask({
     type: 'reparse_user',
@@ -658,36 +480,22 @@ export class PubgMatchService {
   })
   async reparseUserTelemetryWithProgress(userId: string): Promise<{ success: boolean; message: string; totalMatches: number; processedMatches: number; successMatches: number; failedMatches: number; userId: string }> {
     const matchIds = await this.getUserMatchHistory(userId);
-    const totalMatches = matchIds.length;
-    let processedMatches = 0;
-    let successMatches = 0;
-    let failedMatches = 0;
 
-    for (const matchId of matchIds) {
-      getCurrentTaskContext()?.checkCancelled();
-
-      try {
-        const result = await this.reparseMatchTelemetry(matchId);
-        if (result.success) {
-          successMatches++;
-        } else {
-          failedMatches++;
-        }
-      } catch (error) {
-        this.logger.warn(`Failed to reparse match ${matchId}: ${error.message}`);
-        failedMatches++;
-      }
-
-      processedMatches++;
-      await getCurrentTaskContext()?.updateProgress(Math.round((processedMatches / totalMatches) * 100));
-    }
+    const { totalMatches, processedMatches, successMatches, failedMatches } = await this.reparseMatchesBatch(matchIds);
 
     return { success: true, message: `User telemetry reparse completed: ${successMatches}/${totalMatches} matches`, totalMatches, processedMatches, successMatches, failedMatches, userId };
   }
 
   /**
    * 重解析所有用户比赛遥测数据（带进度回调）
-   * 使用批量 API 一次性获取所有用户的比赛，避免逐个查询
+   * 
+   * 功能说明：
+   * - 获取所有已生成死亡笔记的用户
+   * - 使用批量 API 一次性获取所有用户的比赛
+   * - 去重后批量重解析遥测数据
+   * - 支持任务取消和进度更新
+   * 
+   * @returns 重解析结果统计
    */
   @ExecutableTask({
     type: 'reparse_all',
@@ -709,6 +517,355 @@ export class PubgMatchService {
     }
 
     const matchIds = Array.from(allMatchIds);
+    const { totalMatches, processedMatches, successMatches, failedMatches } = await this.reparseMatchesBatch(matchIds);
+
+    return { success: true, message: `All telemetry reparse completed: ${successMatches}/${totalMatches} matches`, totalMatches, processedMatches, successMatches, failedMatches };
+  }
+
+  // ============================================================
+  // 私有方法 - 本地文件操作
+  // ============================================================
+
+  /**
+   * 构建比赛文件路径
+   * 
+   * @param matchId - 比赛 ID
+   * @param dateStr - 可选，格式 YYYY-MM-DD，用于按日期分目录存储
+   * @returns 文件路径对象
+   */
+  private getMatchPaths(matchId: string, dateStr?: string): MatchPaths {
+    const dataFileName = `${matchId}.json`;
+
+    if (dateStr) {
+      const matchDir = path.join(this.matchBaseDir, dateStr);
+      const telemetryDir = path.join(this.telemetryBaseDir, dateStr);
+      return {
+        matchDir,
+        telemetryDir,
+        matchFilePath: path.join(matchDir, dataFileName),
+        telemetryFilePath: path.join(telemetryDir, dataFileName),
+        dataFileName,
+      };
+    }
+
+    return {
+      matchDir: this.matchBaseDir,
+      telemetryDir: this.telemetryBaseDir,
+      matchFilePath: path.join(this.matchBaseDir, dataFileName),
+      telemetryFilePath: path.join(this.telemetryBaseDir, dataFileName),
+      dataFileName,
+    };
+  }
+
+  /**
+   * 查找比赛文件
+   * 
+   * 功能说明：
+   * - 优先在根目录查找
+   * - 再遍历日期子目录查找
+   * 
+   * @param baseDir - 基础目录
+   * @param fileName - 文件名
+   * @returns 文件路径，不存在返回 null
+   */
+  private findMatchFile(baseDir: string, fileName: string): string | null {
+    const directPath = path.join(baseDir, fileName);
+    if (fs.existsSync(directPath)) {
+      return directPath;
+    }
+
+    if (!fs.existsSync(baseDir)) {
+      return null;
+    }
+
+    const dateDirs = fs.readdirSync(baseDir).filter(f => {
+      const fullPath = path.join(baseDir, f);
+      return fs.statSync(fullPath).isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(f);
+    });
+
+    for (const dateDir of dateDirs) {
+      const filePath = path.join(baseDir, dateDir, fileName);
+      if (fs.existsSync(filePath)) {
+        return filePath;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 确保 match 和 telemetry 目录存在
+   * 
+   * @param paths - 包含 matchDir 和 telemetryDir 的路径对象
+   */
+  private ensureDirectoriesExist(paths: { matchDir: string; telemetryDir: string }): void {
+    if (!fs.existsSync(paths.matchDir)) {
+      fs.mkdirSync(paths.matchDir, { recursive: true });
+    }
+    if (!fs.existsSync(paths.telemetryDir)) {
+      fs.mkdirSync(paths.telemetryDir, { recursive: true });
+    }
+  }
+
+  /**
+   * 从比赛数据中提取日期字符串 (YYYY-MM-DD)
+   * 
+   * @param matchData - 比赛原始数据
+   * @returns 日期字符串，失败返回空字符串
+   */
+  private extractDateFromMatchData(matchData: any): string {
+    try {
+      const createdAt = matchData.data?.attributes?.createdAt;
+      if (createdAt) {
+        const tz = this.configService.get<string>('TZ', 'Asia/Shanghai');
+        const date = new Date(createdAt);
+        return date.toLocaleDateString('sv-SE', { timeZone: tz });
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to extract date from match data:`, error);
+    }
+    return '';
+  }
+
+  // ============================================================
+  // 私有方法 - 数据读写（本地缓存）
+  // ============================================================
+
+  /**
+   * 读取本地缓存的比赛数据
+   * 
+   * @param matchId - 比赛 ID
+   * @param paths - 文件路径对象
+   * @returns 存在则返回 MatchDataResult，不存在返回 null
+   */
+  private async readLocalMatchData(matchId: string, paths: MatchPaths): Promise<MatchDataResult | null> {
+    try {
+      const matchFile = this.findMatchFile(this.matchBaseDir, paths.dataFileName);
+      const telemetryFile = this.findMatchFile(this.telemetryBaseDir, paths.dataFileName);
+
+      if (matchFile && telemetryFile) {
+        const matchData = JSON.parse(fs.readFileSync(matchFile, 'utf-8'));
+        const telemetryEvents = JSON.parse(fs.readFileSync(telemetryFile, 'utf-8'));
+
+        return {
+          attributes: matchData.data.attributes,
+          included: matchData.included,
+          telemetryEvents,
+          dataPath: matchFile,
+        };
+      }
+      return null;
+    } catch (error) {
+      this.logger.warn(`Failed to read local match data for ${matchId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 保存比赛数据和遥测数据到本地 JSON 文件
+   * 
+   * @param matchData - 比赛原始数据
+   * @param telemetryEvents - 遥测事件数组
+   * @param paths - 文件路径对象
+   */
+  private async saveMatchData(matchData: any, telemetryEvents: any[], paths: MatchPaths): Promise<void> {
+    fs.writeFileSync(paths.matchFilePath, JSON.stringify({ data: matchData.data, included: matchData.included }, null, 2));
+    fs.writeFileSync(paths.telemetryFilePath, JSON.stringify(telemetryEvents, null, 2));
+  }
+
+  // ============================================================
+  // 私有方法 - 数据解析
+  // ============================================================
+
+  /**
+   * 解析单个击杀事件
+   * 
+   * 功能说明：
+   * - 兼容 LogPlayerKillV2 和 LogPlayerKill 两种格式
+   * 
+   * @param event - 遥测击杀事件
+   * @returns 解析后的击杀事件，victimId 为空时返回 null
+   */
+  private parseKillEvent(event: TelemetryKillEventV2): {
+    killerId: string | null;
+    killerName: string | null;
+    victimId: string;
+    victimName: string;
+    weaponId: string;
+    distance: number;
+    isHeadshot: boolean;
+    timestamp: Date;
+  } | null {
+    let killerId: string | null;
+    let killerName: string | null;
+    let victimId: string;
+    let victimName: string;
+    let weaponId: string;
+    let distance: number;
+    let isHeadshot: boolean;
+    let timestamp: Date;
+
+    if (event._T === 'LogPlayerKillV2') {
+      killerId = event.killer?.accountId || null;
+      killerName = event.killer?.name || null;
+      victimId = event.victim?.accountId || '';
+      victimName = event.victim?.name || '';
+      weaponId = PubgMatchService.getFirstDefined(event.killerDamageInfo?.damageCauserName, event.finishDamageInfo?.damageCauserName);
+      distance = event.killerDamageInfo?.distance || event.finishDamageInfo?.distance || 0;
+      isHeadshot = event.killerDamageInfo?.damageReason === 'HeadShot' || event.finishDamageInfo?.damageReason === 'HeadShot';
+      timestamp = new Date(event._D);
+    } else {
+      killerId = event.character?.accountId || null;
+      killerName = event.character?.name || null;
+      victimId = event.victim?.accountId || '';
+      victimName = event.victim?.name || '';
+      weaponId = PubgMatchService.getFirstDefined(event.weapon?.weaponId, event.weapon?.weaponClass);
+      distance = event.distance || 0;
+      isHeadshot = event.isHeadshot || false;
+      timestamp = new Date(event.timestamp || event._D);
+    }
+
+    if (!victimId) {
+      return null;
+    }
+
+    if (!killerId) {
+      weaponId = PubgMatchService.getFirstDefined(event.finishDamageInfo?.damageTypeCategory, event.killerDamageInfo?.damageTypeCategory, weaponId);
+    }
+
+    return { killerId, killerName, victimId, victimName, weaponId, distance, isHeadshot, timestamp };
+  }
+
+  /**
+   * 返回第一个非空字符串
+   * 
+   * @param values - 待检查的字符串列表
+   * @returns 第一个非空字符串，都为空时返回 'Unknown'
+   */
+  private static getFirstDefined(...values: (string | undefined)[]): string {
+    return values.find(v => v !== undefined && v !== '') || 'Unknown';
+  }
+
+  // ============================================================
+  // 私有方法 - 比赛同步
+  // ============================================================
+
+  /**
+   * 处理单场比赛同步
+   * 
+   * 功能说明：
+   * - 获取比赛数据（本地缓存或 API）
+   * - 保存到 Match 表
+   * - 关联已生成死亡笔记的用户到 UserMatch 表
+   * - 解析击杀事件到 KillEvent 表
+   * 
+   * @param matchId - 比赛 ID
+   * @param deathNoteUserIds - 已生成死亡笔记的用户 ID 集合
+   * @returns 同步结果统计
+   */
+  private async processSingleMatchSync(
+    matchId: string,
+    deathNoteUserIds: Set<string>,
+  ): Promise<{ newMatches: number; updatedMatches: number; newUserMatches: number; newKillEvents: number }> {
+    const matchData = await this.getMatchOriginalData(matchId);
+    const existingMatch = await this.exists(matchId);
+
+    await this.saveMatch(matchId, matchData);
+
+    const participants = this.extractParticipants(matchData);
+    const matchedUsers = Array.from(participants.entries())
+      .filter(([userId]) => deathNoteUserIds.has(userId));
+
+    let newUserMatches = 0;
+    for (const [userId, { ranking, won }] of matchedUsers) {
+      await this.userMatchService.upsert(userId, matchId, ranking, won);
+      newUserMatches++;
+    }
+
+    let newKillEvents = 0;
+    if (matchData.telemetryEvents?.length > 0) {
+      newKillEvents = matchData.telemetryEvents.filter(event =>
+        event._T === 'LogPlayerKillV2' || event._T === 'LogPlayerKill',
+      ).length;
+      await this.parseAndSaveKillEvents(matchId, matchData.telemetryEvents);
+    }
+
+    return {
+      newMatches: existingMatch ? 0 : 1,
+      updatedMatches: existingMatch ? 1 : 0,
+      newUserMatches,
+      newKillEvents,
+    };
+  }
+
+  // ============================================================
+  // 私有方法 - 缓存管理
+  // ============================================================
+
+  /**
+   * 清除所有已生成死亡笔记的用户的缓存
+   * 
+   * 功能说明：
+   * - 遍历所有已生成死亡笔记的用户
+   * - 获取用户昵称
+   * - 清除对应的死亡笔记缓存
+   */
+  private async invalidateDeathNoteCache(): Promise<void> {
+    const deathNoteUsers = await this.generationService.findAll();
+    for (const user of deathNoteUsers) {
+      if (!user.isGenerated) continue;
+      const userNickname = await this.userService.getUserById(user.userId);
+      if (userNickname) {
+        await cache.invalidatePattern(`deathnote:${userNickname.name}:`);
+      }
+    }
+  }
+
+  // ============================================================
+  // 私有方法 - 比赛查询
+  // ============================================================
+
+  /**
+   * 批量获取多个用户的比赛ID列表
+   * 
+   * 功能说明：
+   * - 复用 getPlayersByIds 的批量查询能力
+   * - 每批最多 10 个用户
+   * 
+   * @param playerIds - 玩家 ID 列表
+   * @returns 玩家 ID 到比赛 ID 列表的映射
+   */
+  private async getPlayersMatchesBatch(playerIds: string[]): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+
+    for (let i = 0; i < playerIds.length; i += 10) {
+      const batch = playerIds.slice(i, i + 10);
+      const players = await this.pubgApi.getPlayersByIds(batch);
+
+      for (const player of players) {
+        result.set(player.id, player.matches || []);
+      }
+    }
+
+    return result;
+  }
+
+  // ============================================================
+  // 私有方法 - 遥测重解析
+  // ============================================================
+
+  /**
+   * 批量重解析比赛遥测数据
+   * 
+   * 功能说明：
+   * - 遍历比赛 ID 列表，逐个重解析遥测数据
+   * - 支持任务取消检查
+   * - 实时更新进度
+   * 
+   * @param matchIds - 待重解析的比赛 ID 列表
+   * @returns 重解析结果统计
+   */
+  private async reparseMatchesBatch(matchIds: string[]): Promise<{ totalMatches: number; processedMatches: number; successMatches: number; failedMatches: number }> {
     const totalMatches = matchIds.length;
     let processedMatches = 0;
     let successMatches = 0;
@@ -733,6 +890,6 @@ export class PubgMatchService {
       await getCurrentTaskContext()?.updateProgress(Math.round((processedMatches / totalMatches) * 100));
     }
 
-    return { success: true, message: `All telemetry reparse completed: ${successMatches}/${totalMatches} matches`, totalMatches, processedMatches, successMatches, failedMatches };
+    return { totalMatches, processedMatches, successMatches, failedMatches };
   }
 }
