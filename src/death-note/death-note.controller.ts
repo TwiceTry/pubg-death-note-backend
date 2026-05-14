@@ -66,11 +66,11 @@ export class DeathNoteController {
       
       const result = await this.deathNoteService.getVictimKillHistory(nickname, victimNickname);
       
-      if (result.totalKills === 0) {
+      if (result.killDetails.length === 0) {
         return this.successResponse(result, `${nickname} has never killed ${victimNickname}`);
       }
       
-      return this.successResponse(result, `${nickname} has killed ${victimNickname} ${result.totalKills} time(s)`);
+      return this.successResponse(result, `${nickname} has killed ${victimNickname} ${result.killDetails.length} time(s)`);
     } catch (error) {
       this.logger.error(`Error getting victim kill history for ${nickname} -> ${victimNickname}:`, error);
       throw new HttpException(
@@ -95,11 +95,11 @@ export class DeathNoteController {
       
       const result = await this.deathNoteService.getKilledByHistory(nickname, killerNickname);
       
-      if (result.totalDeaths === 0) {
+      if (result.killDetails.length === 0) {
         return this.successResponse(result, `${killerNickname} has never killed ${nickname}`);
       }
       
-      return this.successResponse(result, `${killerNickname} has killed ${nickname} ${result.totalDeaths} time(s)`);
+      return this.successResponse(result, `${killerNickname} has killed ${nickname} ${result.killDetails.length} time(s)`);
     } catch (error) {
       this.logger.error(`Error getting killed by history for ${nickname} <- ${killerNickname}:`, error);
       throw new HttpException(

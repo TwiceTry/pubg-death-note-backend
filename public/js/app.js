@@ -562,8 +562,8 @@ async function queryVictimHistory() {
     var data1 = await res1.json();
     var data2 = await res2.json();
 
-    var targetKilledOther = (res1.ok && data1.success) ? data1.totalKills : 0;
-    var otherKilledTarget = (res2.ok && data2.success) ? data2.totalDeaths : 0;
+    var targetKilledOther = (res1.ok && data1.success) ? data1.killDetails.length : 0;
+    var otherKilledTarget = (res2.ok && data2.success) ? data2.killDetails.length : 0;
 
     if (targetKilledOther === 0 && otherKilledTarget === 0) {
       showSuccess('result-victim',
@@ -591,6 +591,7 @@ async function queryVictimHistory() {
       var targetKillsHtml = data1.killDetails.map(function (kill) {
         return '<div class="kill-item">' +
           '<div class="kill-left">' +
+          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -611,6 +612,7 @@ async function queryVictimHistory() {
       var otherKillsHtml = data2.killDetails.map(function (kill) {
         return '<div class="kill-item death-item">' +
           '<div class="kill-left">' +
+          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -658,30 +660,43 @@ async function querySniperForVictim() {
     if (data.totalSnipers === 0) {
       showSuccess('result-victim',
         '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
-        '<div class="empty-state">暂无狙击玩家（击杀互动2次以上）</div>'
+        '<div class="empty-state">暂无互动玩家（互动2次以上）</div>'
       );
       return;
     }
 
     var snipersHtml = data.snipers.map(function (sniper, idx) {
-      return '<div class="sniper-item">' +
+      var safeName = escapeHtml(sniper.killerName);
+      return '<div class="sniper-item" data-nickname="' + encodeURIComponent(data.nickname) + '" data-target="' + encodeURIComponent(sniper.killerName) + '">' +
         '<div class="sniper-rank">#' + (idx + 1) + '</div>' +
         '<div class="sniper-info">' +
-        '<div class="sniper-name"><a href="javascript:void(0)" onclick="showSniperInteraction(\'' + escapeHtml(sniper.killerName) + '\')" class="sniper-link">' + escapeHtml(sniper.killerName) + '</a></div>' +
+        '<div class="sniper-name">' + safeName + '</div>' +
         '<div class="sniper-stats">' +
-        '<span class="sniper-kills-by-them">对方击杀你: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
-        '<span class="sniper-kills-by-me">你击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-them">被击杀: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-me">击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
         '<span class="sniper-total">总互动: <strong>' + sniper.totalInteractions + '</strong> 次</span>' +
         '</div>' +
         '</div>' +
-        '</div>';
+        '<div class="sniper-expand-icon">▶</div>' +
+        '</div>' +
+        '<div class="sniper-details" style="display:none;"></div>';
     }).join('');
 
     showSuccess('result-victim',
       '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
-      '<div class="sniper-count">共 <strong>' + data.totalSnipers + '</strong> 名狙击玩家</div>' +
+      '<div class="sniper-count">共 <strong>' + data.totalSnipers + '</strong> 名互动玩家</div>' +
       '<div class="sniper-list">' + snipersHtml + '</div>'
     );
+
+    var container = document.getElementById('result-victim');
+    container.onclick = function (e) {
+      var item = e.target.closest('.sniper-item');
+      if (item) {
+        var nickname = decodeURIComponent(item.getAttribute('data-nickname'));
+        var target = decodeURIComponent(item.getAttribute('data-target'));
+        toggleSniperDetails(nickname, target, item);
+      }
+    };
   } catch (error) {
     showError('result-victim', error.message);
   } finally {
@@ -714,8 +729,8 @@ async function showSniperInteraction(sniperNickname) {
       return;
     }
 
-    var myKillsThem = data1.totalKills || 0;
-    var theyKilledMe = data2.totalDeaths || 0;
+    var myKillsThem = data1.killDetails.length || 0;
+    var theyKilledMe = data2.killDetails.length || 0;
 
     var html = '<div class="vs-header">' +
       '<div class="vs-player">' + escapeHtml(currentDeathNoteNickname) + '</div>' +
@@ -737,6 +752,7 @@ async function showSniperInteraction(sniperNickname) {
       var myKillsHtml = data1.killDetails.map(function (kill) {
         return '<div class="kill-item">' +
           '<div class="kill-left">' +
+          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -757,6 +773,7 @@ async function showSniperInteraction(sniperNickname) {
       var theirKillsHtml = data2.killDetails.map(function (kill) {
         return '<div class="kill-item death-item">' +
           '<div class="kill-left">' +
+          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -880,59 +897,110 @@ function loadDeathNotePage(page) {
   queryDeathNote(page);
 }
 
-async function querySnipers() {
-  var nickname = currentDeathNoteNickname || document.getElementById('deathnote-nickname').value.trim();
+async function toggleSniperDetails(nickname, targetNickname, el) {
+  nickname = decodeURIComponent(nickname);
+  targetNickname = decodeURIComponent(targetNickname);
+  var detailsEl = el.nextElementSibling;
+  var iconEl = el.querySelector('.sniper-expand-icon');
 
-  if (!nickname) {
-    showError('result-snipers', '请先查询死亡笔记或输入玩家昵称');
+  if (detailsEl.style.display === 'block') {
+    detailsEl.style.display = 'none';
+    el.classList.remove('expanded');
+    if (iconEl) iconEl.textContent = '▶';
     return;
   }
 
-  var btn = document.getElementById('btn-snipers');
-  btn.disabled = true;
-  showLoading('result-snipers');
+  detailsEl.style.display = 'block';
+  detailsEl.innerHTML = '<div class="sniper-details-loading">加载中...</div>';
+  el.classList.add('expanded');
+  if (iconEl) iconEl.textContent = '▼';
 
   try {
-    var url = getApiBase() + '/death-note/nickname/' + encodeURIComponent(nickname) + '/snipers';
-    var response = await fetch(url);
-    var data = await response.json();
+    var url1 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(nickname) + '/victim/' + encodeURIComponent(targetNickname);
+    var url2 = getApiBase() + '/death-note/nickname/' + encodeURIComponent(nickname) + '/killed-by/' + encodeURIComponent(targetNickname);
 
-    if (!response.ok || !data.success) {
-      showError('result-snipers', data.message || data.error || '请求失败');
+    var [response1, response2] = await Promise.all([
+      fetch(url1),
+      fetch(url2)
+    ]);
+
+    var data1 = await response1.json();
+    var data2 = await response2.json();
+
+    if (!response1.ok || !data1.success || !response2.ok || !data2.success) {
+      detailsEl.innerHTML = '<div class="sniper-details-error">加载失败</div>';
       return;
     }
 
-    if (data.totalSnipers === 0) {
-      showSuccess('result-snipers',
-        '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
-        '<div class="empty-state">暂无狙击玩家（击杀互动2次以上）</div>'
-      );
+    var myKillsCount = data1.killDetails.length || 0;
+    var theirKillsCount = data2.killDetails.length || 0;
+
+    if (myKillsCount === 0 && theirKillsCount === 0) {
+      detailsEl.innerHTML = '<div class="sniper-details-empty">暂无击杀事件</div>';
       return;
     }
 
-    var snipersHtml = data.snipers.map(function (sniper, idx) {
-      return '<div class="sniper-item">' +
-        '<div class="sniper-rank">#' + (idx + 1) + '</div>' +
-        '<div class="sniper-info">' +
-        '<div class="sniper-name">' + escapeHtml(sniper.killerName) + '</div>' +
-        '<div class="sniper-stats">' +
-        '<span class="sniper-kills-by-them">被击杀: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
-        '<span class="sniper-kills-by-me">击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
-        '<span class="sniper-total">总互动: <strong>' + sniper.totalInteractions + '</strong> 次</span>' +
-        '</div>' +
-        '</div>' +
+    var html = '<div class="vs-header">' +
+      '<div class="vs-player">' + escapeHtml(nickname) + '</div>' +
+      '<div class="vs-divider">VS</div>' +
+      '<div class="vs-player">' + escapeHtml(targetNickname) + '</div>' +
+      '</div>' +
+      '<div class="vs-stats">' +
+      '<div class="vs-stat">' +
+      '<div class="vs-stat-value kills">' + myKillsCount + '</div>' +
+      '<div class="vs-stat-label">我击杀对方</div>' +
+      '</div>' +
+      '<div class="vs-stat">' +
+      '<div class="vs-stat-value deaths">' + theirKillsCount + '</div>' +
+      '<div class="vs-stat-label">对方击杀我</div>' +
+      '</div>' +
+      '</div>';
+
+    if (myKillsCount > 0 && data1.killDetails && data1.killDetails.length > 0) {
+      var myKillsHtml = data1.killDetails.map(function (kill) {
+        return '<div class="kill-item">' +
+          '<div class="kill-left">' +
+          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
+          '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
+          '</div>' +
+          '<div class="kill-right">' +
+          (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
+          '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+
+      html += '<div class="vs-section">' +
+        '<div class="vs-section-title kills">我击杀 ' + escapeHtml(targetNickname) + ' (' + myKillsCount + '次)</div>' +
+        myKillsHtml +
         '</div>';
-    }).join('');
+    }
 
-    showSuccess('result-snipers',
-      '<div class="result-title">狙击榜单 - ' + escapeHtml(data.nickname) + '</div>' +
-      '<div class="sniper-count">共 <strong>' + data.totalSnipers + '</strong> 名狙击玩家</div>' +
-      '<div class="sniper-list">' + snipersHtml + '</div>'
-    );
+    if (theirKillsCount > 0 && data2.killDetails && data2.killDetails.length > 0) {
+      var theirKillsHtml = data2.killDetails.map(function (kill) {
+        return '<div class="kill-item death-item">' +
+          '<div class="kill-left">' +
+          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
+          '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
+          '</div>' +
+          '<div class="kill-right">' +
+          (kill.isHeadshot ? '<span class="kill-headshot">爆头</span>' : '') +
+          '<span class="kill-distance">' + formatDistance(kill.distance) + '</span>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+
+      html += '<div class="vs-section">' +
+        '<div class="vs-section-title deaths">' + escapeHtml(targetNickname) + ' 击杀我 (' + theirKillsCount + '次)</div>' +
+        theirKillsHtml +
+        '</div>';
+    }
+
+    detailsEl.innerHTML = html;
   } catch (error) {
-    showError('result-snipers', error.message);
-  } finally {
-    btn.disabled = false;
+    detailsEl.innerHTML = '<div class="sniper-details-error">' + escapeHtml(error.message) + '</div>';
   }
 }
 

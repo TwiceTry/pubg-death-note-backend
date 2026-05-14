@@ -69,15 +69,17 @@ export class DeathNoteService {
       distance: event.distance,
       isHeadshot: event.isHeadshot,
       timestamp: event.timestamp,
+      killerId: event.killerId,
+      killerName: event.killerName,
+      victimId: event.victimId,
+      victimName: event.victimName,
     }));
 
     return {
       userId: cachedKiller?.pubgId || 'unknown',
       nickname: cachedKiller?.nickname || nickname,
-      victimId: cachedVictim?.pubgId || 'unknown',
-      victimNickname: cachedVictim?.nickname || victimNickname,
-      totalKills: killEvents.length,
-      totalDeaths: deathEvents.length,
+      targetId: cachedVictim?.pubgId || (killEvents.length > 0 ? killEvents[0].victimId : 'unknown'),
+      targetNickname: cachedVictim?.nickname || victimNickname,
       killDetails,
     };
   }
@@ -124,15 +126,17 @@ export class DeathNoteService {
       distance: event.distance,
       isHeadshot: event.isHeadshot,
       timestamp: event.timestamp,
+      killerId: event.killerId,
+      killerName: event.killerName,
+      victimId: event.victimId,
+      victimName: event.victimName,
     }));
 
     return {
       userId: cachedVictim?.pubgId || 'unknown',
       nickname: cachedVictim?.nickname || nickname,
-      victimId: cachedKiller?.pubgId || 'unknown',
-      victimNickname: cachedKiller?.nickname || killerNickname,
-      totalKills: killEvents.length,
-      totalDeaths: deathEvents.length,
+      targetId: cachedKiller?.pubgId || (deathEvents.length > 0 ? (deathEvents[0].killerId ?? 'unknown') : 'unknown'),
+      targetNickname: cachedKiller?.nickname || killerNickname,
       killDetails,
     };
   }

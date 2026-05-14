@@ -657,12 +657,12 @@ export class KillEventService {
   }
 
   /**
-   * 获取狙击统计（击杀当前玩家 2 次以上的玩家榜单）
+   * 获取狙击统计（互动次数 2 次及以上的玩家榜单）
    * 
    * 功能说明：
-   * - 统计击杀当前玩家次数超过 2 次的玩家
-   * - 同时统计当前玩家对他们的反杀次数
-   * - 按击杀次数降序排列，返回全部结果
+   * - 统计与当前玩家互动次数达到 2 次及以上的所有玩家
+   * - 互动包括：对方击杀当前玩家、当前玩家击杀对方
+   * - 按总互动次数降序排列，返回全部结果
    * 
    * @param userId - 用户 ID
    * @param targetUserId - 指定目标玩家 ID（可选）
@@ -684,24 +684,37 @@ export class KillEventService {
       }
     });
 
-    const killsByMeMap = new Map<string, number>();
+    const killsByMeMap = new Map<string, { name: string; count: number }>();
     myKillEvents.forEach(event => {
       if (event.victimId) {
-        const count = killsByMeMap.get(event.victimId) ?? 0;
-        killsByMeMap.set(event.victimId, count + 1);
+        const existing = killsByMeMap.get(event.victimId);
+        if (existing) {
+          existing.count++;
+        } else {
+          killsByMeMap.set(event.victimId, { name: event.victimName ?? 'Unknown', count: 1 });
+        }
       }
     });
 
-    const snipers = Array.from(killsByThemMap.entries())
-      .filter(([, data]) => data.count > 2)
-      .map(([killerId, data]) => ({
-        killerId,
-        killerName: data.name,
-        killsByThem: data.count,
-        killsByMe: killsByMeMap.get(killerId) ?? 0,
-        totalInteractions: data.count + (killsByMeMap.get(killerId) ?? 0),
-      }))
-      .sort((a, b) => b.killsByThem - a.killsByThem);
+    const allPlayerIds = new Set([...killsByThemMap.keys(), ...killsByMeMap.keys()]);
+
+    const snipers = Array.from(allPlayerIds)
+      .filter(playerId => !playerId.toLowerCase().startsWith('ai'))
+      .map(playerId => {
+        const themData = killsByThemMap.get(playerId);
+        const meData = killsByMeMap.get(playerId);
+        const killsByThem = themData?.count ?? 0;
+        const killsByMe = meData?.count ?? 0;
+        return {
+          killerId: playerId,
+          killerName: themData?.name ?? meData?.name ?? 'Unknown',
+          killsByThem,
+          killsByMe,
+          totalInteractions: killsByThem + killsByMe,
+        };
+      })
+      .filter(s => s.totalInteractions >= 2)
+      .sort((a, b) => b.totalInteractions - a.totalInteractions);
 
     return {
       totalSnipers: snipers.length,

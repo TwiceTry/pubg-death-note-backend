@@ -58,15 +58,17 @@ export interface VictimKillDetail {
   distance: number;
   isHeadshot: boolean;
   timestamp: Date;
+  killerId: string | null;
+  killerName: string | null;
+  victimId: string;
+  victimName: string;
 }
 
 export interface VictimKillHistoryResponse {
   userId: string;
   nickname: string;
-  victimId: string;
-  victimNickname: string;
-  totalKills: number;
-  totalDeaths: number;
+  targetId: string;
+  targetNickname: string;
   killDetails: VictimKillDetail[];
 }
 

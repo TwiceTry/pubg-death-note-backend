@@ -570,6 +570,18 @@ input[type="date"] {
   border-color: rgba(255, 71, 87, 0.15);
 }
 
+.kill-vs {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.kill-item.death-item .kill-vs {
+  color: #ff6b81;
+}
+
 .kill-section-title,
 .death-section-title {
   font-size: 12px;
@@ -674,6 +686,20 @@ input[type="date"] {
   font-weight: 700;
   color: #ffa500;
   font-family: 'Black Ops One', cursive;
+}
+
+.vs-header {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  padding: 15px 0 5px;
+}
+
+.vs-player {
+  font-size: 18px;
+  font-weight: 700;
+  color: #e0e0e0;
 }
 
 .vs-section {
@@ -992,6 +1018,48 @@ input[type="date"] {
 .sniper-total {
   color: #ffa500;
   font-size: 13px;
+}
+
+.sniper-item {
+  cursor: pointer;
+}
+
+.sniper-item.expanded {
+  background: rgba(255, 165, 0, 0.08);
+  border-color: rgba(255, 165, 0, 0.5);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+}
+
+.sniper-expand-icon {
+  font-size: 12px;
+  color: #888;
+  transition: transform 0.2s;
+  min-width: 20px;
+  text-align: center;
+}
+
+.sniper-details {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 165, 0, 0.2);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  padding: 15px;
+  margin-top: -10px;
+  margin-bottom: 10px;
+}
+
+.sniper-details-loading,
+.sniper-details-error,
+.sniper-details-empty {
+  text-align: center;
+  padding: 20px;
+  color: #888;
+  font-size: 13px;
+}
+
+.sniper-details-error {
+  color: #ff4757;
 }
 
 @media (max-width: 600px) {
