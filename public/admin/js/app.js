@@ -338,7 +338,13 @@ async function generateDeathNote() {
   }
 
   const btn = document.getElementById('btnGenerate');
+  const progressContainer = document.getElementById('deathnoteProgress');
+  const progressFill = document.getElementById('deathnoteProgressFill');
+  const progressText = document.getElementById('deathnoteProgressText');
   btn.disabled = true;
+  progressContainer.style.display = 'flex';
+  progressFill.style.width = '0%';
+  progressText.textContent = '0%';
   showResult('deathnoteResult', '正在创建生成任务...', 'info');
 
   try {
@@ -348,6 +354,7 @@ async function generateDeathNote() {
       const errorData = await res.json();
       showResult('deathnoteResult', '创建任务失败: ' + (errorData.message || '请求参数错误'), 'error');
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
@@ -360,6 +367,7 @@ async function generateDeathNote() {
         showResult('deathnoteResult', '该用户已有任务正在运行，请等待完成后再试', 'error');
       }
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
@@ -368,6 +376,7 @@ async function generateDeathNote() {
     if (!data.success) {
       showResult('deathnoteResult', '创建任务失败', 'error');
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
@@ -383,6 +392,7 @@ async function generateDeathNote() {
         if (!statusData.success || !statusData.task) {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           return;
         }
 
@@ -392,9 +402,13 @@ async function generateDeathNote() {
           return;
         }
 
+        progressFill.style.width = `${task.progress}%`;
+        progressText.textContent = `${task.progress}%`;
+
         if (task.status === 'completed') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           const result = task.result || {};
           showResult('deathnoteResult',
             `生成完成！用户: ${result.nickname}, 比赛数: ${result.totalMatches}, 处理: ${result.processedMatches}`,
@@ -403,19 +417,23 @@ async function generateDeathNote() {
         } else if (task.status === 'failed') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           showResult('deathnoteResult', '生成失败: ' + (task.result?.message || '未知错误'), 'error');
         } else if (task.status === 'cancelled') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
         }
       } catch (err) {
         clearInterval(pollInterval);
         btn.disabled = false;
+        progressContainer.style.display = 'none';
         showResult('deathnoteResult', '查询状态失败: ' + err.message, 'error');
       }
     }, 1000);
   } catch (err) {
     btn.disabled = false;
+    progressContainer.style.display = 'none';
     showResult('deathnoteResult', '请求失败: ' + err.message, 'error');
   }
 }
@@ -428,7 +446,13 @@ async function incrementalUpdateDeathNote() {
   }
 
   const btn = document.getElementById('btnIncremental');
+  const progressContainer = document.getElementById('deathnoteProgress');
+  const progressFill = document.getElementById('deathnoteProgressFill');
+  const progressText = document.getElementById('deathnoteProgressText');
   btn.disabled = true;
+  progressContainer.style.display = 'flex';
+  progressFill.style.width = '0%';
+  progressText.textContent = '0%';
   showResult('deathnoteResult', '正在创建增量更新任务...', 'info');
 
   try {
@@ -438,12 +462,14 @@ async function incrementalUpdateDeathNote() {
       const errorData = await res.json();
       showResult('deathnoteResult', '创建任务失败: ' + (errorData.message || '请求参数错误'), 'error');
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
     if (res.status === 409) {
       showResult('deathnoteResult', '该用户已有任务正在运行，请等待完成后再试', 'error');
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
@@ -452,6 +478,7 @@ async function incrementalUpdateDeathNote() {
     if (!data.success) {
       showResult('deathnoteResult', '创建任务失败: ' + (data.message || '未知错误'), 'error');
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
@@ -467,6 +494,7 @@ async function incrementalUpdateDeathNote() {
         if (!statusData.success || !statusData.task) {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           return;
         }
 
@@ -476,31 +504,39 @@ async function incrementalUpdateDeathNote() {
           return;
         }
 
+        progressFill.style.width = `${task.progress}%`;
+        progressText.textContent = `${task.progress}%`;
+
         if (task.status === 'completed') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           const result = task.result || {};
           showResult('deathnoteResult',
-            `增量更新完成！用户: ${result.nickname}, 新增比赛数: ${result.totalMatches}, 处理: ${result.processedMatches}`,
+            `增量更新完成！用户: ${result.nickname}, API获取比赛数: ${result.totalMatches}, 处理: ${result.processedMatches}`,
             'success');
           loadTaskList();
         } else if (task.status === 'failed') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           showResult('deathnoteResult', '增量更新失败: ' + (task.result?.message || '未知错误'), 'error');
         } else if (task.status === 'cancelled') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           showResult('deathnoteResult', '任务已取消', 'error');
         }
       } catch (err) {
         clearInterval(pollInterval);
         btn.disabled = false;
+        progressContainer.style.display = 'none';
         showResult('deathnoteResult', '查询状态失败: ' + err.message, 'error');
       }
     }, 1000);
   } catch (err) {
     btn.disabled = false;
+    progressContainer.style.display = 'none';
     showResult('deathnoteResult', '请求失败: ' + err.message, 'error');
   }
 }
@@ -517,7 +553,13 @@ async function forceGenerateDeathNote() {
   }
 
   const btn = document.getElementById('btnForceGenerate');
+  const progressContainer = document.getElementById('deathnoteProgress');
+  const progressFill = document.getElementById('deathnoteProgressFill');
+  const progressText = document.getElementById('deathnoteProgressText');
   btn.disabled = true;
+  progressContainer.style.display = 'flex';
+  progressFill.style.width = '0%';
+  progressText.textContent = '0%';
   showResult('deathnoteResult', '正在创建强制生成任务...', 'info');
 
   try {
@@ -527,6 +569,7 @@ async function forceGenerateDeathNote() {
       const errorData = await res.json();
       showResult('deathnoteResult', '创建任务失败: ' + (errorData.message || '请求参数错误'), 'error');
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
@@ -535,6 +578,7 @@ async function forceGenerateDeathNote() {
     if (!data.success) {
       showResult('deathnoteResult', '创建任务失败', 'error');
       btn.disabled = false;
+      progressContainer.style.display = 'none';
       return;
     }
 
@@ -550,6 +594,7 @@ async function forceGenerateDeathNote() {
         if (!statusData.success || !statusData.task) {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           return;
         }
 
@@ -559,9 +604,13 @@ async function forceGenerateDeathNote() {
           return;
         }
 
+        progressFill.style.width = `${task.progress}%`;
+        progressText.textContent = `${task.progress}%`;
+
         if (task.status === 'completed') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           const result = task.result || {};
           showResult('deathnoteResult',
             `强制生成完成！用户: ${result.nickname}, 比赛数: ${result.totalMatches}, 处理: ${result.processedMatches}`,
@@ -570,16 +619,19 @@ async function forceGenerateDeathNote() {
         } else if (task.status === 'failed') {
           clearInterval(pollInterval);
           btn.disabled = false;
+          progressContainer.style.display = 'none';
           showResult('deathnoteResult', '生成失败: ' + (task.result?.message || '未知错误'), 'error');
         }
       } catch (err) {
         clearInterval(pollInterval);
         btn.disabled = false;
+        progressContainer.style.display = 'none';
         showResult('deathnoteResult', '查询状态失败: ' + err.message, 'error');
       }
     }, 1000);
   } catch (err) {
     btn.disabled = false;
+    progressContainer.style.display = 'none';
     showResult('deathnoteResult', '请求失败: ' + err.message, 'error');
   }
 }

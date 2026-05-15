@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PUBG Death Note - 管理后台</title>
-  <link rel="stylesheet" href="/admin/css/style.css?v=4">
+  <link rel="stylesheet" href="/admin/css/style.css?v=5">
 </head>
 
 <body>
@@ -94,6 +94,12 @@
             <button class="btn btn-primary" id="btnGenerate" onclick="generateDeathNote()">初次生成</button>
             <button class="btn btn-success" id="btnIncremental" onclick="incrementalUpdateDeathNote()">增量更新</button>
             <button class="btn btn-danger" id="btnForceGenerate" onclick="forceGenerateDeathNote()">强制重新生成</button>
+            <div id="deathnoteProgress" class="progress-container" style="display: none;">
+              <div class="progress-bar">
+                <div class="progress-fill" id="deathnoteProgressFill"></div>
+              </div>
+              <span class="progress-text" id="deathnoteProgressText">0%</span>
+            </div>
             <div id="deathnoteResult" class="result-box"></div>
           </div>
         </div>
@@ -113,7 +119,7 @@
     </div>
   </div>
 
-  <script src="/admin/js/app.js?v=4"></script>
+  <script src="/admin/js/app.js?v=5"></script>
 </body>
 
 </html>

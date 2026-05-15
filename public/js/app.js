@@ -591,7 +591,7 @@ async function queryVictimHistory() {
       var targetKillsHtml = data1.killDetails.map(function (kill) {
         return '<div class="kill-item">' +
           '<div class="kill-left">' +
-          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<div class="kill-vs">击杀 ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -612,7 +612,7 @@ async function queryVictimHistory() {
       var otherKillsHtml = data2.killDetails.map(function (kill) {
         return '<div class="kill-item death-item">' +
           '<div class="kill-left">' +
-          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<div class="kill-vs">击杀 ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -672,8 +672,8 @@ async function querySniperForVictim() {
         '<div class="sniper-info">' +
         '<div class="sniper-name">' + safeName + '</div>' +
         '<div class="sniper-stats">' +
-        '<span class="sniper-kills-by-them">被击杀: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
-        '<span class="sniper-kills-by-me">击杀对方: <strong>' + sniper.killsByMe + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-them">被 ' + escapeHtml(data.nickname) + ' 击杀: <strong>' + sniper.killsByThem + '</strong> 次</span>' +
+        '<span class="sniper-kills-by-me">击杀 ' + escapeHtml(data.nickname) + ': <strong>' + sniper.killsByMe + '</strong> 次</span>' +
         '<span class="sniper-total">总互动: <strong>' + sniper.totalInteractions + '</strong> 次</span>' +
         '</div>' +
         '</div>' +
@@ -740,11 +740,11 @@ async function showSniperInteraction(sniperNickname) {
       '<div class="vs-stats">' +
       '<div class="vs-stat">' +
       '<div class="vs-stat-value kills">' + myKillsThem + '</div>' +
-      '<div class="vs-stat-label">我击杀对方</div>' +
+      '<div class="vs-stat-label">' + escapeHtml(currentDeathNoteNickname) + ' 击杀 ' + escapeHtml(sniperNickname) + '</div>' +
       '</div>' +
       '<div class="vs-stat">' +
       '<div class="vs-stat-value deaths">' + theyKilledMe + '</div>' +
-      '<div class="vs-stat-label">对方击杀我</div>' +
+      '<div class="vs-stat-label">' + escapeHtml(sniperNickname) + ' 击杀 ' + escapeHtml(currentDeathNoteNickname) + '</div>' +
       '</div>' +
       '</div>';
 
@@ -752,7 +752,7 @@ async function showSniperInteraction(sniperNickname) {
       var myKillsHtml = data1.killDetails.map(function (kill) {
         return '<div class="kill-item">' +
           '<div class="kill-left">' +
-          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<div class="kill-vs">击杀 ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -764,7 +764,7 @@ async function showSniperInteraction(sniperNickname) {
       }).join('');
 
       html += '<div class="vs-section">' +
-        '<div class="vs-section-title kills">我击杀 ' + escapeHtml(sniperNickname) + ' (' + myKillsThem + '次)</div>' +
+        '<div class="vs-section-title kills">' + escapeHtml(currentDeathNoteNickname) + ' 击杀 ' + escapeHtml(sniperNickname) + ' (' + myKillsThem + '次)</div>' +
         myKillsHtml +
         '</div>';
     }
@@ -773,7 +773,7 @@ async function showSniperInteraction(sniperNickname) {
       var theirKillsHtml = data2.killDetails.map(function (kill) {
         return '<div class="kill-item death-item">' +
           '<div class="kill-left">' +
-          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<div class="kill-vs">击杀 ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -785,7 +785,7 @@ async function showSniperInteraction(sniperNickname) {
       }).join('');
 
       html += '<div class="vs-section">' +
-        '<div class="vs-section-title deaths">' + escapeHtml(sniperNickname) + ' 击杀我 (' + theyKilledMe + '次)</div>' +
+        '<div class="vs-section-title deaths">' + escapeHtml(sniperNickname) + ' 击杀 ' + escapeHtml(currentDeathNoteNickname) + ' (' + theyKilledMe + '次)</div>' +
         theirKillsHtml +
         '</div>';
     }
@@ -880,7 +880,7 @@ async function queryDeathNote(page) {
     window.history.pushState({ nickname: nickname }, '', '/n/' + encodeURIComponent(nickname));
 
     document.getElementById('subtitle').innerHTML = '<span>' + escapeHtml(nickname) + '</span> 的死亡笔记';
-    document.getElementById('guideText').textContent = '输入另一位玩家昵称，查看 ' + escapeHtml(nickname) + ' 是否被对方击杀或击杀过对方';
+    document.getElementById('guideText').textContent = '输入另一位玩家昵称，查看与 ' + escapeHtml(nickname) + ' 的相互击杀记录';
 
     renderDays(data.days, '');
 
@@ -948,11 +948,11 @@ async function toggleSniperDetails(nickname, targetNickname, el) {
       '<div class="vs-stats">' +
       '<div class="vs-stat">' +
       '<div class="vs-stat-value kills">' + myKillsCount + '</div>' +
-      '<div class="vs-stat-label">我击杀对方</div>' +
+      '<div class="vs-stat-label">' + escapeHtml(nickname) + ' 击杀 ' + escapeHtml(targetNickname) + '</div>' +
       '</div>' +
       '<div class="vs-stat">' +
       '<div class="vs-stat-value deaths">' + theirKillsCount + '</div>' +
-      '<div class="vs-stat-label">对方击杀我</div>' +
+      '<div class="vs-stat-label">' + escapeHtml(targetNickname) + ' 击杀 ' + escapeHtml(nickname) + '</div>' +
       '</div>' +
       '</div>';
 
@@ -960,7 +960,7 @@ async function toggleSniperDetails(nickname, targetNickname, el) {
       var myKillsHtml = data1.killDetails.map(function (kill) {
         return '<div class="kill-item">' +
           '<div class="kill-left">' +
-          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<div class="kill-vs">击杀 ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -972,7 +972,7 @@ async function toggleSniperDetails(nickname, targetNickname, el) {
       }).join('');
 
       html += '<div class="vs-section">' +
-        '<div class="vs-section-title kills">我击杀 ' + escapeHtml(targetNickname) + ' (' + myKillsCount + '次)</div>' +
+        '<div class="vs-section-title kills">' + escapeHtml(nickname) + ' 击杀 ' + escapeHtml(targetNickname) + ' (' + myKillsCount + '次)</div>' +
         myKillsHtml +
         '</div>';
     }
@@ -981,7 +981,7 @@ async function toggleSniperDetails(nickname, targetNickname, el) {
       var theirKillsHtml = data2.killDetails.map(function (kill) {
         return '<div class="kill-item death-item">' +
           '<div class="kill-left">' +
-          '<div class="kill-vs">' + escapeHtml(kill.killerName) + ' → ' + escapeHtml(kill.victimName) + '</div>' +
+          '<div class="kill-vs">击杀 ' + escapeHtml(kill.victimName) + '</div>' +
           '<span class="kill-weapon">' + escapeHtml(formatWeapon(kill.weaponId)) + '</span>' +
           '<span class="kill-time">' + formatDate(kill.matchTime) + ' ' + escapeHtml(translateMap(kill.mapName)) + '</span>' +
           '</div>' +
@@ -993,7 +993,7 @@ async function toggleSniperDetails(nickname, targetNickname, el) {
       }).join('');
 
       html += '<div class="vs-section">' +
-        '<div class="vs-section-title deaths">' + escapeHtml(targetNickname) + ' 击杀我 (' + theirKillsCount + '次)</div>' +
+        '<div class="vs-section-title deaths">' + escapeHtml(targetNickname) + ' 击杀 ' + escapeHtml(nickname) + ' (' + theirKillsCount + '次)</div>' +
         theirKillsHtml +
         '</div>';
     }
@@ -1060,7 +1060,7 @@ async function fetchAvailableDates(nickname) {
       document.getElementById('subtitle').innerHTML = '<span>' + escapeHtml(pageNickname) + '</span> 的死亡笔记';
       document.getElementById('deathnote-nickname').value = pageNickname;
       document.getElementById('deathnote-search').style.display = 'none';
-      document.getElementById('guideText').textContent = '输入另一位玩家昵称，查看 ' + pageNickname + ' 是否被对方击杀或击杀过对方';
+      document.getElementById('guideText').textContent = '输入另一位玩家昵称，查看与 ' + pageNickname + ' 的相互击杀记录';
       
       currentDeathNoteNickname = pageNickname;
       fetchAvailableDates(pageNickname);
