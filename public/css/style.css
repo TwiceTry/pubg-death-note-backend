@@ -779,6 +779,19 @@ input[type="date"] {
   font-size: 12px;
 }
 
+.sniper-badge {
+  background: #00cec9;
+  color: #0a0a0a;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-left: 6px;
+  border: 1px solid #00cec9;
+  box-shadow: 0 0 6px rgba(0, 206, 201, 0.5);
+}
+
 .pagination {
   display: flex;
   justify-content: center;
