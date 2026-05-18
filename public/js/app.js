@@ -310,6 +310,7 @@ function buildStatsHtml(data, dateRange) {
   var totalMatches = 0;
   var totalWins = 0;
   var totalAIKills = 0;
+  var sniperMatchCount = 0;
 
   if (data.days && data.days.length > 0) {
     data.days.forEach(function (day) {
@@ -318,11 +319,21 @@ function buildStatsHtml(data, dateRange) {
       totalDeaths += day.deaths;
       day.matches.forEach(function (match) {
         if (match.won) totalWins++;
+        var hasSniper = false;
         match.killDetails.forEach(function (kill) {
           if (kill.victimId && kill.victimId.toLowerCase().startsWith('ai')) {
             totalAIKills++;
           }
+          if (sniperPlayerIds.has(kill.victimId)) {
+            hasSniper = true;
+          }
         });
+        match.deathDetails.forEach(function (death) {
+          if (sniperPlayerIds.has(death.killerId)) {
+            hasSniper = true;
+          }
+        });
+        if (hasSniper) sniperMatchCount++;
       });
     });
   }
@@ -357,6 +368,10 @@ function buildStatsHtml(data, dateRange) {
     '<div class="stat-row">' +
     '<span class="stat-label">击杀AI玩家</span>' +
     '<span class="stat-value" style="color:#9b59b6">' + totalAIKills + '</span>' +
+    '</div>' +
+    '<div class="stat-row">' +
+    '<span class="stat-label">被狙击对局数</span>' +
+    '<span class="stat-value" style="color:#00cec9">' + sniperMatchCount + '</span>' +
     '</div>';
 }
 
