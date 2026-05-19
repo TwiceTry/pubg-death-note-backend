@@ -209,6 +209,7 @@
     "Damage_Explosion_Grenade": "自雷",
     "Damage_Explosion_JerryCan": "汽油桶",
     "Damage_Explosion_PanzerFaustWarhead": "铁拳火箭",
+    "Damage_Explosion_PanzerFaustBackBlast": "铁拳尾焰",
     "Damage_Explosion_Vehicle": "载具爆炸",
     "Damage_Gun": "枪击",
     "Damage_Instant_Fall": "坠落",
