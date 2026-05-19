@@ -45,6 +45,7 @@ function translateMode(modeName) {
 function formatWeapon(weaponId) {
   if (!weaponId) return '未知';
   if (weaponNames[weaponId]) return weaponNames[weaponId];
+  console.warn('[i18n] 未翻译的击杀方式:', weaponId);
   return weaponId;
 }
 
