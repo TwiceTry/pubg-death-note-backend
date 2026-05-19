@@ -217,6 +217,7 @@
     "Damage_None": "未知",
     "Damage_Punch": "拳头",
     "Damage_VehicleCrashHit": "载具撞击",
-    "Damage_VehicleHit": "载具碾压"
+    "Damage_VehicleHit": "载具碾压",
+    "BP_Motorbike_04_C": "摩托车"
   }
 }
